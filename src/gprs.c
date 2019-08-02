@@ -118,7 +118,7 @@ static void gprs_config_apn(void)
     }
 
     //手工设置apn
-    if(0 == GM_strlen((char*)auto_apn.usrname))
+    if(0 == GM_strlen((char*)auto_apn.apn))
     {
 		GM_strncpy((char*)apnConfig.apnName, (const char*)config_service_get_pointer(CFG_APN_NAME), sizeof(apnConfig.apnName));
 		GM_strncpy((char*)apnConfig.apnUserId, (const char*)config_service_get_pointer(CFG_APN_USER), sizeof(apnConfig.apnUserId));
