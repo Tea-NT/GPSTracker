@@ -30,7 +30,7 @@
 #include "gps.h"
 
 //发布版修改这个数字
-#define VERSION_NUMBER  "2.0.74"
+#define VERSION_NUMBER  "2.0.75"
 
 
 #define APN_DEFAULT "CMNET"
