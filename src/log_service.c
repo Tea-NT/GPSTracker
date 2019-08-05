@@ -58,12 +58,13 @@ typedef struct
 typedef struct
 {
     u32 data_finish_time;
+	U32 log_seq;
 }LogServiceExtend;
 
 
 static FifoType s_log_data_fifo = {0,0,0,0,0};
 
-static LogServiceExtend s_log_socket_extend;
+static LogServiceExtend s_log_socket_extend = {0,0};
 
 #define GM_LOG_MAX_LEN 1536
 
@@ -533,17 +534,25 @@ void log_service_send_msg(SocketType *socket)
 		
 		//一条日志<GM*862964022280089*xxxxxx>,6个字节：LOG_PKT_HEAD——3个字节，2个分隔符，1和结束符
 		//日志回复<GM*ACK>
-		send_buf_len = 6 + GM_strlen((const char*)imei) + log_data.len;
+		send_buf_len = 6 + GM_strlen((const char*)imei) + 10 + log_data.len;
 		p_send_buf = GM_MemoryAlloc(send_buf_len + 1);
-		p_send_buf[send_buf_len] = 0;
+		GM_memset(p_send_buf, 0, send_buf_len + 1);
 		
 		//最多从源字符串format中拷贝size字节的内容(含字符串结尾标志'\0')到目标字符串
-		GM_snprintf(p_send_buf, send_buf_len + 1, "%s%c%s%c%s%c", LOG_PKT_HEAD,LOG_PKT_SPLIT,(const char*)imei,LOG_PKT_SPLIT,(const char*)log_data.buf,LOG_PKT_TAIL);
-		
+		GM_snprintf(p_send_buf, send_buf_len + 1, "%s%c%s%c%d%c%s%c", 
+													LOG_PKT_HEAD,
+													LOG_PKT_SPLIT,
+													(const char*)imei,
+													LOG_PKT_SPLIT,
+													s_log_socket_extend.log_seq
+													,LOG_PKT_SPLIT,
+													(const char*)log_data.buf,
+													LOG_PKT_TAIL);
+		s_log_socket_extend.log_seq++;
         if(GM_SUCCESS == gm_socket_send(socket, (U8*)p_send_buf, send_buf_len))
         {
             fifo_pop_len(&s_log_data_fifo, sizeof(LogSaveData));
-			//LOG(DEBUG,"clock(%d) log_service_send_msg msglen(%d):%s", util_clock(), send_buf_len,p_send_buf);
+			LOG(DEBUG,"clock(%d) log_service_send_msg msglen(%d):%s", util_clock(), send_buf_len,p_send_buf);
 			log_data_release(&log_data);
         }
         else
