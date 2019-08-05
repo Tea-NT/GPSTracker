@@ -617,6 +617,7 @@ void log_service_print(LogLevel level,const char *format, ...)
 		return;
 	}
 	uart_write(GM_UART_DEBUG, (U8*)buf, log_data_len);
+	GM_SysMsdelay(2);
 
     // DEBUG 编译默认不upload, 改loglevel后，只报info以上级别的 
 	if (level > DEBUG && s_log_level > DEBUG && s_upload_level   <= level 
