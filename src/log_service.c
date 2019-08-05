@@ -25,6 +25,7 @@
 #include <stdarg.h>
 #include <stdio.h> 
 #include <gm_stdlib.h>
+#include <gm_system.h>
 #include "log_service.h"
 #include "config_service.h"
 #include "gm_stdlib.h"
@@ -687,8 +688,9 @@ static void log_msg_receive(void)
     // parse buf msg
     // if OK, after creating other socket, transfer to finish
     // not ok, ignore msg.
-    u8 head[100];
-    u32 len = sizeof(head);
+    u8 msg[100] = {0};
+
+	u16 len = sizeof(msg);
 
     if(SOCKET_STATUS_WORK != s_log_socket.status)
     {
@@ -696,7 +698,7 @@ static void log_msg_receive(void)
     }
     
     //get head then delete
-    if(GM_SUCCESS != fifo_peek(&s_log_socket.fifo, head, len))
+    if(GM_SUCCESS != fifo_peek_until(&s_log_socket.fifo, msg, &len,'>'))
     {
         // no msg
         return;
@@ -704,7 +706,7 @@ static void log_msg_receive(void)
 
     fifo_pop_len(&s_log_socket.fifo, len);
 
-	log_service_print(DEBUG,"clock(%d) log_msg_receive msg len(%d)", util_clock(), len);
+	log_service_print(DEBUG,"clock(%d) log_msg_receive msg:%s, len:%d", util_clock(), msg,len);
 
     //do nothing. just read and clear msgs
 
