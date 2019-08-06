@@ -917,6 +917,16 @@ void update_msg_start_data_block_request(SocketType *socket)
         LOG(ERROR,"clock(%d) update_msg_start_data_block_request assert(total_len(%d)) failed.", util_clock(),s_file_extend.total_len);
         return;
     }
+
+    if(s_file_extend.handle >= 0)
+    {
+        // not possible 
+        JsonObject* p_log_root = json_create();
+        json_add_string(p_log_root, "event", "update_filemod_file_create need close");
+        log_service_upload(INFO,p_log_root);
+        GM_FS_Close(s_file_extend.handle);
+        s_file_extend.handle = -1;
+    }
     
     if(!bret)
     {
@@ -1123,15 +1133,6 @@ static GM_ERRCODE update_filemod_file_create(u32 fs_len, int *sys_error)
     u32 will_write = 0;
 
     *sys_error = 0;
-    if(s_file_extend.handle >= 0)
-    {
-        JsonObject* p_log_root = json_create();
-        json_add_string(p_log_root, "event", "update_filemod_file_create need close");
-        log_service_upload(INFO,p_log_root);
-        GM_FS_Close(s_file_extend.handle);
-        s_file_extend.handle = -1;
-    }
-    
     s_file_extend.handle = GM_FS_Open(UPDATE_UPGRADE_FILE, GM_FS_READ_WRITE | GM_FS_ATTR_ARCHIVE | GM_FS_CREATE);
     if (s_file_extend.handle < 0)
     {

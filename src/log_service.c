@@ -549,7 +549,8 @@ void log_service_send_msg(SocketType *socket)
 													(const char*)log_data.buf,
 													LOG_PKT_TAIL);
 		s_log_socket_extend.log_seq++;
-        if(GM_SUCCESS == gm_socket_send(socket, (U8*)p_send_buf, send_buf_len))
+		send_buf_len = GM_strlen(p_send_buf);
+        if(GM_SUCCESS == gm_socket_send(socket, (U8*)p_send_buf,send_buf_len))
         {
             fifo_pop_len(&s_log_data_fifo, sizeof(LogSaveData));
 			LOG(DEBUG,"clock(%d) log_service_send_msg msglen(%d):%s", util_clock(), send_buf_len,p_send_buf);

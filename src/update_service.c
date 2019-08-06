@@ -539,6 +539,12 @@ static GM_ERRCODE update_msg_send_request(void)
 
 void update_service_after_response(bool newsocket, u32 total_len)
 {
+    //已处于获取数据状态了, 多余的消息不处理.
+    if(s_update_socket_extend.getting_data)
+    {
+        return;
+    }
+    
     if (total_len <= UPDATAE_FILE_MAX_SIZE)
     {
         //准备获取文件
