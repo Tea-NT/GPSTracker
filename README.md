@@ -14,4 +14,5 @@
     https://detail.m.tmall.com/item.htm?id=588600707880
     https://detail.m.tmall.com/item.htm?id=579762201357
 
-
+    FAQ文档：
+    https://github.com/brucewangzhihua/GPSTracker/blob/master/FAQ.txt
