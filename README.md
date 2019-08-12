@@ -9,6 +9,6 @@
     
 # 测试样机 #  
 [GS03样机购买](https://detail.m.tmall.com/item.htm?id=588600707880)  
-[GS03样机购买](https://detail.m.tmall.com/item.htm?id=579762201357)  
+[GS05样机购买](https://detail.m.tmall.com/item.htm?id=579762201357)  
 
 # FAQ #
