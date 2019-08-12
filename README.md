@@ -7,11 +7,9 @@
 
 *以上工具由热心网友提供，建议大家购买正版编译工具和下载工具*  
     
-# 测试样机 #  
+# 测试样机 # 
 [GS03样机购买](https://detail.m.tmall.com/item.htm?id=588600707880)  
 [GS05样机购买](https://detail.m.tmall.com/item.htm?id=579762201357)  
-
-# FAQ #
 
 # 联系方式 #
 
