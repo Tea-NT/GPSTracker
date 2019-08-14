@@ -1707,7 +1707,7 @@ static void protocol_jt_pack_item_num(u8 *pdata, u16 *idx, u32 item, u32 value, 
         pdata[(*idx)++] = value_u8;
     }
     
-    (*idx) += item_len;
+    //(*idx) += item_len;
 }
 
 
