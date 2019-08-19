@@ -202,12 +202,6 @@ static GM_ERRCODE write_mtk_epo_time(const ST_Time utc_time);
 
 static void write_mtk_epo_pos(void);
 
-static void write_mtk_full_cold_start(void);
-
-//static void write_mtk_cold_start(void);
-//static void write_mtk_high_accuracy(bool enable);
-//static void write_set_min_snr(const U8 min_snr);
-
 static void open_td_vtg(void);
 
 static GM_ERRCODE write_td_agps_time(const ST_Time utc_time,const U8 leap_sencond);
@@ -813,9 +807,13 @@ static void write_mtk_config(void)
 	config_service_get(CFG_MIN_SNR, TYPE_BYTE, &min_snr, sizeof(min_snr));
 	if(system_state_is_cold_boot())
 	{
-		write_mtk_full_cold_start();
+		gps_write_mtk_cmd("PMTK,104");
 		system_state_set_cold_boot(false);
 	}
+
+	//AlwaysLocate Mode（省电模式）
+	GM_SysMsdelay(10);
+	gps_write_mtk_cmd("PMTK225,2,3000,7000,120000,10000");
 
 	//GM_SysMsdelay(10);
 	
@@ -2110,50 +2108,6 @@ static void write_mtk_epo_pos(void)
 	}
 }
 
-static void write_mtk_full_cold_start(void)
-{
-	GM_ERRCODE ret = GM_SUCCESS;
-	U8 sentence[SENTENCE_MAX_LENGTH] = {0};
-	U8 len = SENTENCE_MAX_LENGTH;
-	nmea_creat_mtk_full_cold_start_sentence(sentence,&len);
-	LOG(DEBUG,"write_mtk_full_cold_start:%s",sentence);
-	ret = uart_write(GM_UART_GPS, sentence, len);
-	if (GM_SUCCESS != ret)
-	{
-		LOG(ERROR,"Failed to write data to GM_UART_GPS,ret=%d",ret);
-	}
-}
-
-/*
-static void write_mtk_cold_start(void)
-{
-	GM_ERRCODE ret = GM_SUCCESS;
-	U8 sentence[SENTENCE_MAX_LENGTH] = {0};
-	U8 len = SENTENCE_MAX_LENGTH;
-	nmea_creat_mtk_cold_start_sentence(sentence,&len);
-	LOG(DEBUG,"write_mtk_cold_start:%s",sentence);
-	ret = uart_write(GM_UART_GPS, sentence, len);
-	if (GM_SUCCESS != ret)
-	{
-		LOG(ERROR,"Failed to write data to GM_UART_GPS,ret=%d",ret);
-	}
-}
-
-
-static void write_mtk_high_accuracy(bool enable)
-{
-	GM_ERRCODE ret = GM_SUCCESS;
-	U8 sentence[SENTENCE_MAX_LENGTH] = {0};
-	U8 len = SENTENCE_MAX_LENGTH;
-	nmea_creat_high_accuracy_sentence(enable,sentence,&len);
-	LOG(DEBUG,"write_mtk_high_accuracy:%s",sentence);
-	ret = uart_write(GM_UART_GPS, sentence, len);
-	if (GM_SUCCESS != ret)
-	{
-		LOG(ERROR,"Failed to write data to GM_UART_GPS,ret=%d",ret);
-	}
-}*/
-
 void gps_write_mtk_cmd(const char* cmd)
 {
 	GM_ERRCODE ret = GM_SUCCESS;
@@ -2166,20 +2120,6 @@ void gps_write_mtk_cmd(const char* cmd)
 		LOG(ERROR,"Failed to write data to GM_UART_GPS,ret=%d",ret);
 	}
 }
-
-/*static void write_set_min_snr(const U8 min_snr)
-{
-	GM_ERRCODE ret = GM_SUCCESS;
-	U8 sentence[SENTENCE_MAX_LENGTH] = {0};
-	U8 len = SENTENCE_MAX_LENGTH;
-	nmea_creat_set_min_snr_sentence(min_snr,sentence,&len);
-	LOG(DEBUG,"write_set_min_snr:%s",sentence);
-	ret = uart_write(GM_UART_GPS, sentence, len);
-	if (GM_SUCCESS != ret)
-	{
-		LOG(ERROR,"Failed to write data to GM_UART_GPS,ret=%d",ret);
-	}
-}*/
 
 static void open_td_vtg(void)
 {

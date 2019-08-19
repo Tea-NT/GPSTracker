@@ -364,47 +364,6 @@ bool nmea_creat_mtk_aid_time_sentence(const ST_Time st_time, U8* p_sentence, U8*
 bool nmea_creat_mtk_aid_pos_sentence(const float ref_lat, const float ref_lng, U8* p_sentence, U8* p_len);
 
 /**
- * Function:   创建内置（MTK）完全冷启动语句
- * Description:
- * Input:	   p_len:最大长度
- * Output: 	   p_sentence:输出的辅助信息语句;p_len:语句长度
- * Return: 	   true——成功；false——失败
- * Others: 	
- */
-bool nmea_creat_mtk_full_cold_start_sentence(U8* p_sentence, U8* p_len);
-bool nmea_creat_mtk_cold_start_sentence(U8* p_sentence, U8* p_len);
-
-/**
- * Function:   创建内置（MTK）高精度模式语句
- * Description:
- * Input:	   enable:是否高精度模式；p_len:最大长度
- * Output: 	   p_sentence:输出的辅助信息语句;p_len:语句长度
- * Return: 	   true——成功；false——失败
- * Others: 	
- */
-bool nmea_creat_high_accuracy_sentence(bool enable,U8* p_sentence, U8* p_len);
-
-/**
- * Function:   创建内置（MTK）打开/关闭主动干扰消除语句
- * Description:
- * Input:	   enable:是否开启；p_len:最大长度
- * Output: 	   p_sentence:输出的辅助信息语句;p_len:语句长度
- * Return: 	   true——成功；false——失败
- * Others: 	
- */
-bool nmea_creat_active_interference_cancellation(bool enable,U8* p_sentence, U8* p_len);
-
-/**
- * Function:   创建内置（MTK）设置最小SNR语句
- * Description:
- * Input:	   min_snr:最小信噪比，p_len:最大长度
- * Output: 	   p_sentence:输出的辅助信息语句;p_len:语句长度
- * Return: 	   true——成功；false——失败
- * Others: 	
- */
-bool nmea_creat_set_min_snr_sentence(const U8 min_snr, U8* p_sentence, U8* p_len);
-
-/**
  * Function:   创建内置（MTK）EPO数据语句
  * Description:
  * Input:	   seg_index:分片ID；p_data:数据分片指针；data_len:数据长度；p_len:最大长度
