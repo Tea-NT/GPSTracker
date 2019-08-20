@@ -437,7 +437,7 @@ static void update_service_work_proc(void)
     u32 current_time = util_clock();
     u8 one_send = 1;
 
-    one_send = (STREAM_TYPE_DGRAM == config_service_update_socket_type())? UPDATE_MAX_PACK_ONE_SEND: 1;
+    one_send = (STREAM_TYPE_DGRAM == config_service_update_socket_type())? UPDATE_MAX_PACK_ONE_SEND: UPDATE_MAX_PACK_ONE_SEND;
     if(! s_update_socket_extend.getting_data )
     {
         //发送请求阶段 
@@ -568,9 +568,18 @@ void update_service_result_to_server(void)
 {
     if(get_file_extend()->result == REPORT_RESULT_UPDATED)
     {
-        util_delete_file(UPDATE_MINOR_IMAGE);
-        GM_FS_Rename(UPDATE_TARGET_IMAGE, UPDATE_MINOR_IMAGE);
-        GM_FS_Rename(UPDATE_UPGRADE_FILE, UPDATE_TARGET_IMAGE);
+        //lz modified for only save at most 2 copies. 
+        // master/minor which not exist , write to corresponding file, old file delete.
+        if (GM_FS_CheckFile(UPDATE_TARGET_IMAGE) < 0)
+        {
+            GM_FS_Rename(UPDATE_UPGRADE_FILE, UPDATE_TARGET_IMAGE);
+            util_delete_file(UPDATE_MINOR_IMAGE);
+        }
+        else
+        {
+            GM_FS_Rename(UPDATE_UPGRADE_FILE, UPDATE_MINOR_IMAGE);
+            util_delete_file(UPDATE_TARGET_IMAGE);
+        }
     }
     
     update_msg_send_result_to_server(&s_update_socket);

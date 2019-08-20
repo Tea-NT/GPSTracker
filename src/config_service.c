@@ -1708,8 +1708,8 @@ void config_service_change_port(ConfigParamEnum idx, u16 port)
 
 StreamType config_service_update_socket_type(void)
 {
-    return STREAM_TYPE_DGRAM;
-    //return STREAM_TYPE_STREAM;
+    //return STREAM_TYPE_DGRAM;
+    return STREAM_TYPE_STREAM;
 }
 
 StreamType config_service_agps_socket_type(void)

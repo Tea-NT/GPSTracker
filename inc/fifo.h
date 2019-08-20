@@ -44,6 +44,7 @@ GM_ERRCODE fifo_reset(FifoType * fifo);
 GM_ERRCODE fifo_delete(FifoType * fifo);
 
 u32 fifo_get_msg_length(FifoType * fifo);
+u32 fifo_get_left_space(FifoType * fifo);
 
 GM_ERRCODE fifo_insert(FifoType * fifo, u8 *data, u32 len);
 GM_ERRCODE fifo_retrieve(FifoType * fifo, u8 *data, u32 *len_p);

@@ -163,7 +163,14 @@ GM_ERRCODE gm_socket_init(SocketType *socket, SocketIndexEnum access_id)
     socket->port = 0;
     socket->access_id = access_id;
 
-    fifo_init(&(socket->fifo), SIZE_OF_SOCK_FIFO);
+    if(access_id==SOCKET_INDEX_UPDATE)
+    {
+        fifo_init(&(socket->fifo), 5*SIZE_OF_SOCK_FIFO);
+    }
+    else
+    {
+        fifo_init(&(socket->fifo), SIZE_OF_SOCK_FIFO);
+    }
     add_to_all_sockets(socket);
     return GM_SUCCESS;
 }
@@ -450,13 +457,12 @@ GM_ERRCODE gm_socket_connect(SocketType *socket)
         return GM_SUCCESS;
     }
     
+    LOG(INFO,"clock(%d) gm_socket_connect type(%d)(%d.%d.%d.%d:%d).", 
+        util_clock(), socket->type, socket->ip[0], socket->ip[1], socket->ip[2], socket->ip[3], socket->port);
     if(GM_SUCCESS != gm_is_valid_ip(socket->ip))
     {
-        LOG(INFO,"clock(%d) gm_socket_connect type(%d)(%d.%d.%d.%d:%d) ip not valid.", 
-            util_clock(), socket->type, socket->ip[0], socket->ip[1], socket->ip[2], socket->ip[3], socket->port);
         return GM_PARAM_ERROR;
     }
-
 
     socket->send_time = util_clock();
     socket->id = GM_SocketCreate(s_account_id, socket->type);
@@ -571,15 +577,17 @@ GM_ERRCODE gm_socket_recv(SocketType *socket)
 
     do
     {
+        //GM_SocketRecv必须把所有消息接收完， 否则后面会收不了消息，正因为如此， fifo的缓冲要足够大，放得下
         GM_memset(recv_buff, 0x00, MAX_SOCKET_RECV_MSG_LEN);
         recvlen = GM_SocketRecv(socket->id, recv_buff, MAX_SOCKET_RECV_MSG_LEN);
         if(recvlen > 0)
         {
-            LOG(DEBUG,"clock(%d) gm_socket_recv type(%d)(%d.%d.%d.%d:%d) id(%d) recvlen(%d).", 
+            LOG(INFO,"clock(%d) gm_socket_recv type(%d)(%d.%d.%d.%d:%d) id(%d) recvlen(%d).", 
                 util_clock(), socket->type, socket->ip[0], socket->ip[1], socket->ip[2], socket->ip[3], 
                 socket->port,socket->id,recvlen);
         }
-        
+
+       
         if (recvlen > 0)
         {
             gps_service_confirm_gps_cache(socket);

@@ -78,7 +78,8 @@ static void gprs_config_apn(void)
     GM_memset(&auto_apn, 0 , sizeof(auto_apn));
     GM_memset(&apnConfig, 0 , sizeof(apnConfig));
     config_service_get(CFG_APN_CHECK, TYPE_BOOL, &auto_check_apn, sizeof(auto_check_apn));
-    
+
+    LOG(INFO,"gprs_config_apn auto_check_apn(%d).",auto_check_apn);
     if(auto_check_apn)
     {
         // 从sim卡中读出imsi
@@ -394,14 +395,19 @@ static void gprs_call_ok_proc(void)
 
     if (4 == bear_status)
     {
+        u8 local_ip[4] = {0};
+        u8 ret = 0;
 		JsonObject* p_log_root = json_create();
+        char print_string[100];
         //此时网络可用了
         led_set_gsm_state(GM_LED_FLASH);
         gprs_transfer_status(CURRENT_GPRS_ACTIVATED);
 
 
         // 网络可用了
-		json_add_string(p_log_root, "event", "GPRS net ok");
+        ret = GM_GetLocalIP(local_ip);
+        sprintf(print_string,"GPRS net ok. ret=%d, ip=%d.%d.%d.%d", ret, local_ip[0], local_ip[1], local_ip[2], local_ip[3]);
+		json_add_string(p_log_root, "event", print_string);
 		json_add_int(p_log_root, "csq", gsm_get_csq());
 		log_service_upload(INFO,p_log_root);
     }

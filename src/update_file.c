@@ -372,7 +372,7 @@ static void update_filemod_work_proc(void)
     if((current_time - s_file_socket.send_time) > MESSAGE_TIME_OUT)
     {
         s_file_socket.status_fail_count ++;
-        one_send = (STREAM_TYPE_DGRAM == config_service_update_socket_type())? UPDATE_MAX_PACK_ONE_SEND: 1;
+        one_send = (STREAM_TYPE_DGRAM == config_service_update_socket_type())? UPDATE_MAX_PACK_ONE_SEND: UPDATE_MAX_PACK_ONE_SEND;
         
         if(s_file_socket.status_fail_count >= (MAX_MESSAGE_REPEAT * one_send))
         {
@@ -510,7 +510,17 @@ void update_msg_pack_request(u8 *pdata, u16 *idx, u16 len)
     /*u8 terminal_version_check[10]; //终端当前版本校验码 */
     copy_len_fix = copy_len = 10;
     GM_memset(pdata+(*idx),0, copy_len);
-    checksum = update_filemod_get_checksum(UPDATE_TARGET_IMAGE);
+
+    //lz modified for only save at most 2 copies. 
+    // master/minor both exist , use master
+    if (GM_FS_CheckFile(UPDATE_TARGET_IMAGE) >= 0)
+    {
+        checksum = update_filemod_get_checksum(UPDATE_TARGET_IMAGE);
+    }
+    else  // UPDATE_MINOR_IMAGE 肯定存在, 否则不可能运行
+    {
+        checksum = update_filemod_get_checksum(UPDATE_MINOR_IMAGE);
+    }
 	LOG(INFO,"Bin file check sum:%4X",checksum);
     util_long_to_asc(checksum, pdata+(*idx), 0);
     (*idx) += copy_len_fix;
@@ -587,12 +597,14 @@ void update_msg_receive(SocketType *socket)
                 LOG(WARN,"clock(%d) update_msg_receive MAX_GPRS_PART_MESSAGE_TIMEOUT.",util_clock());
                 //clear fifo and restart socket.
                 fifo_reset(&socket->fifo);
-                gm_socket_close_for_reconnect(socket);
+                s_file_extend.result = REPORT_RESULT_FAILED;
+                update_filemod_close_for_reconnect();
                 packet_error_start = 0;
             }
         }
         return;
     }
+    packet_error_start = 0;
     fifo_pop_len(&socket->fifo, msg_len);
 
 	LOG(DEBUG,"clock(%d) update_msg_receive msg len(%d)", util_clock(), msg_len);
@@ -731,7 +743,7 @@ static void update_msg_parse_file_data(u8 *pdata, u16 len)
     GM_ERRCODE ret = GM_SUCCESS;
     
     u8 one_send = 1;
-    one_send = (STREAM_TYPE_DGRAM == config_service_update_socket_type())? UPDATE_MAX_PACK_ONE_SEND: 1;
+    one_send = (STREAM_TYPE_DGRAM == config_service_update_socket_type())? UPDATE_MAX_PACK_ONE_SEND: UPDATE_MAX_PACK_ONE_SEND;
     
     block_number = MKWORD(pdata[13], pdata[14]);
     if(block_number < s_file_extend.block_current)
@@ -832,7 +844,7 @@ GM_ERRCODE update_msg_send_data_block_request(SocketType *socket)
     u16 current_idx = 0;  //从s_file_extend.block_current计, 第 几个. [0-9]
     u8 one_send = 1;
 
-    one_send = (STREAM_TYPE_DGRAM == config_service_update_socket_type())? UPDATE_MAX_PACK_ONE_SEND: 1;
+    one_send = (STREAM_TYPE_DGRAM == config_service_update_socket_type())? UPDATE_MAX_PACK_ONE_SEND: UPDATE_MAX_PACK_ONE_SEND;
     update_msg_pack_head(buff, &idx, len);  //13 bytes
     idx_save = idx; // save idx
     
@@ -918,6 +930,13 @@ void update_msg_start_data_block_request(SocketType *socket)
         return;
     }
 
+    //lz modified for only save at most 2 copies. 
+    // master/minor both exist , delete minor
+    if (GM_FS_CheckFile(UPDATE_TARGET_IMAGE) >= 0 && GM_FS_CheckFile(UPDATE_MINOR_IMAGE) >= 0)
+    {
+        util_delete_file(UPDATE_MINOR_IMAGE);
+    }
+
     if(s_file_extend.handle >= 0)
     {
         // not possible 
@@ -991,7 +1010,7 @@ static void update_msg_parse_check_block_bits(u16 block)
     if(current_idx) check_bit=check_bit << current_idx;
 
     s_file_extend.block_status = s_file_extend.block_status | check_bit;
-    one_send = (STREAM_TYPE_DGRAM == config_service_update_socket_type())? UPDATE_MAX_PACK_ONE_SEND: 1;
+    one_send = (STREAM_TYPE_DGRAM == config_service_update_socket_type())? UPDATE_MAX_PACK_ONE_SEND: UPDATE_MAX_PACK_ONE_SEND;
 
     for(current_idx = 0; current_idx < one_send; ++ current_idx)
     {

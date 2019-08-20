@@ -15,7 +15,7 @@
 #define UPD_RESERVER_LEN 128
 #define UPDATE_PAKET_MAX_LEN 500   //不能小于等于 UPD_RESERVER_LEN
 #define UPDATAE_FILE_MAX_SIZE    (UPDATE_MAX_PACK * UPDATE_PAKET_MAX_LEN)
-#define UPDATE_MAX_PACK_ONE_SEND       10 //每次发送包数      //不可超过30
+#define UPDATE_MAX_PACK_ONE_SEND       10 //每次发送包数      //不可超过30，remember fifo size should also modified
 
 /*
 2字节	1字节	2字节	8字节	N字节	1字节	1字节

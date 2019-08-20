@@ -108,7 +108,7 @@ GM_ERRCODE gsm_create(void)
 	GM_RegisterCallBack(GM_CB_FAKE_CELL_RECEIVE, (U32)gsm_fake_cell_callback);
     GM_RegisterCallBack(GM_CB_CALL_RECEIVE, (U32)gsm_incomming_call);
 
-	GM_StartTimer(GM_TIMER_GSM_CHECK_SIMCARD, TIM_GEN_1SECOND*5, check_sim_card);
+	GM_StartTimer(GM_TIMER_GSM_CHECK_SIMCARD, TIM_GEN_1SECOND*2, check_sim_card);
 	GM_StartTimer(GM_TIMER_GSM_CHECK_FAKE_CELL_ALARM, TIM_GEN_1SECOND*GM_FAKE_CELL_CHECK_PERIOD, check_fake_cell_alarm_timer_proc);	
 	return GM_SUCCESS;
 }

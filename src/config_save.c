@@ -1433,13 +1433,8 @@ bool config_service_is_test_mode(void)
 
 bool config_service_is_default_imei(void)
 {
-    GM_ERRCODE ret = GM_SUCCESS;
     u8 imei[GM_IMEI_LEN + 1] = {0};
-    if(GM_SUCCESS != (ret = gsm_get_imei(imei)))
-    {
-        LOG(INFO,"clock(%d) config_service_is_default_imei can not get imei, ret:%d.", util_clock(), ret);
-        return false;
-    }
+	gsm_get_imei(imei);
     if (0 == GM_strcmp((const char *)imei, (const char *)GOOME_IMEI_DEFAULT))
     {
         LOG(INFO,"clock(%d) config_service_is_default_imei(%s) = true.", util_clock(), imei);

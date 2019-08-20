@@ -131,6 +131,38 @@ u32 fifo_get_msg_length(FifoType * fifo)
 
 
 
+/************************************************************************
+    Function : 
+    Description : returns left space of the fifo
+            fifo : reference to fifo struct.
+    Change history:
+    Note:
+    Author:     
+    Date:
+************************************************************************/
+u32 fifo_get_left_space(FifoType * fifo)
+{
+    int read_point = 0;
+    int write_point = 0;
+    int left_data_size = 0;
+
+    if (fifo == NULL)
+    {
+        return 0;
+    }
+	
+    read_point = fifo->read_idx;
+    write_point = fifo->write_idx;
+
+    left_data_size = write_point - read_point;
+    if(left_data_size < 0)
+    {
+        left_data_size += fifo->size;
+    }
+
+    return (fifo->size - left_data_size - 1);
+}
+
 
 
 

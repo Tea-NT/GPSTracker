@@ -470,6 +470,13 @@ GM_ERRCODE gps_service_create(bool first_create)
     u8 IP[4];
     u32 port = 0;
     u8 idx = 0;
+    GM_ERRCODE ret = GM_SUCCESS;
+    u8 imei[GM_IMEI_LEN + 1] = {0};
+	
+    if(GM_SUCCESS != (ret = gsm_get_imei(imei)))
+    {
+        return ret;
+    }
 
     /*because s_gps_socket.fifo.base_addr is not initialized, here depend on first_create
     to check base_addr is null or not*/

@@ -811,10 +811,6 @@ static void write_mtk_config(void)
 		system_state_set_cold_boot(false);
 	}
 
-	//AlwaysLocate Mode（省电模式）
-	GM_SysMsdelay(10);
-	gps_write_mtk_cmd("PMTK225,2,3000,7000,120000,10000");
-
 	//GM_SysMsdelay(10);
 	
 	//Enable fast TTFF or high accuracy function when out of the tunnel or garage. (Default enabled high accuracy function). 
