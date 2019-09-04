@@ -389,9 +389,9 @@ U8 system_state_get_extern_battery_voltage_grade(void);
 
 GM_ERRCODE system_state_set_extern_battery_voltage_grade(U8 voltage_grade);
 
-void system_state_set_mileage(U32 mileage);
+void system_state_set_mileage(U64 mileage);
 
-U32 system_state_get_mileage(void);
+U64 system_state_get_mileage(void);
 
 void system_state_set_bin_checksum(U32 check_sum);
 

@@ -181,7 +181,7 @@ GM_ERRCODE gsm_set_imei(U8* p_imei)
 	U8 imei_hex_write[GM_IMEI_HEX_LEN] = {0};
 	U8 imei_hex_read[GM_IMEI_HEX_LEN] = {0};
 	U16 lib_index = 0;
-	S32 imei_len = -1;
+	S32 result = 0;
 	
 	if (!imei_is_valid(p_imei))
 	{
@@ -204,12 +204,12 @@ GM_ERRCODE gsm_set_imei(U8* p_imei)
 
 
     lib_index = GM_ReadNvramLid(NVRAM_EF_IMEI_IMEISV_LID);
-    GM_ReadWriteNvram(false, lib_index, 1, imei_hex_write, GM_IMEI_HEX_LEN, &imei_len);    
+    GM_ReadWriteNvram(false, lib_index, 1, imei_hex_write, GM_IMEI_HEX_LEN, &result);    
 
 	//写入长度正确,再读出来校验一次
-    if (GM_IMEI_HEX_LEN == imei_len)
+    if (result > 0)
     {
-        GM_ReadWriteNvram(true, lib_index, 1, imei_hex_read, GM_IMEI_HEX_LEN, &imei_len);
+        GM_ReadWriteNvram(true, lib_index, 1, imei_hex_read, GM_IMEI_HEX_LEN, &result);
         if (0 == GM_memcmp(imei_hex_write, imei_hex_read, GM_IMEI_HEX_LEN))
         {
             GM_memcpy(s_gsm.imei, p_imei, GM_IMEI_LEN);
@@ -224,7 +224,7 @@ GM_ERRCODE gsm_set_imei(U8* p_imei)
     }
     else
     {
-    	LOG(ERROR,"error len:%d",imei_len);
+    	LOG(ERROR,"Failed to write IMEI!");
         return GM_SYSTEM_ERROR;
     }
 }

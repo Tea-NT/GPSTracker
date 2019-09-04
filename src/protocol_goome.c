@@ -279,8 +279,8 @@ static void protocol_goome_pack_status(U8* pdata, u16 *idx, u16 len)
         }
     }
     
-    config_service_get(CFG_IS_MANUAL_DEFENCE, TYPE_BOOL, &value_u8, sizeof(value_u8));
-    if(value_u8)
+    //config_service_get(CFG_IS_MANUAL_DEFENCE, TYPE_BOOL, &value_u8, sizeof(value_u8));
+    if(system_state_get_defence())
     {
         SET_BIT3(data);
         SET_BIT4(data);

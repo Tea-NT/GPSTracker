@@ -2141,21 +2141,23 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 		case CMD_MILEAGE:
 		{
 			S32 mileage = 0;
+            S64 mileage_in_metre;
 			para_num = command_scan((char*)p_cmd_content, "s;i", cmd_name,&mileage);
 			if (para_num == 1)
 			{		
 				if (1 == lang && COMMAND_GPRS == from)
 				{
-					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "里程:%d公里",system_state_get_mileage());
+					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "里程:%lld公里",system_state_get_mileage()/1000);
 				}
 				else
 				{
-					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Mileage:%d km",system_state_get_mileage());
+					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Mileage:%lld km",system_state_get_mileage()/1000);
 				}
 			}
 			else if(para_num == 2)
 			{
-				system_state_set_mileage(mileage);
+                mileage_in_metre = mileage * 1000;
+				system_state_set_mileage(mileage_in_metre);
 				GM_memcpy(p_rsp, set_success_rsp(from), CMD_MAX_LEN);
 				
 			}

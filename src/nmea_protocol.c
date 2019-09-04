@@ -632,7 +632,7 @@ NMEASentenceID nmea_sentence_id(const char* p_sentence, const U16 len, bool stri
     {
         return NMEA_SENTENCE_INF;
     }
-	else if (!GM_strcmp(type, "PMTK011") || !GM_strcmp(type,"PMTK010"))
+	else if (!GM_strcmp(type,"PMTK010"))
     {
         return NMEA_SENTENCE_MTK_START;
     }
@@ -1096,9 +1096,11 @@ bool nmea_parse_mtk_ack(NMEASentenceMTKACK* p_frame, const char* p_sentence)
 {
 	char type[MAX_TYPE_LEN] = {0};
 	U16 ack_type = 0;
-	if(!nmea_scan(p_sentence, "ti",
+	U16 ack_result = 0;
+	if(!nmea_scan(p_sentence, "ti;i",
           type,
-          &ack_type))
+          &ack_type,
+          &ack_result))
 	{
 		return false;
 	}
@@ -1107,14 +1109,55 @@ bool nmea_parse_mtk_ack(NMEASentenceMTKACK* p_frame, const char* p_sentence)
 		return false;
 	}
 	p_frame->ack_type = (MTKAckType)ack_type;
+	p_frame->ack_result = (MTKAckResult)ack_result;
 	
 	return true;
 }
 
+//$PMTK705,ReleaseStr,Build_ID,Product_Model,(SDK_Version,) *CS<CR><LF>
+//$PMTK705,AXN_5.0,1312,MNL_VER_18092501WCP 05_5.60_25,a175,0*2F
 bool nmea_parse_mtk_ver(NMEASentenceVER* p_frame, const char* p_sentence)
 {
+	char type[MAX_TYPE_LEN] = {0};
+	if(!nmea_scan(p_sentence, "tsis;",
+		  type,
+		  p_frame->release_str,
+		  &p_frame->build_id,
+		  p_frame->ver))
+	{
+		return false;
+	}
+	if (GM_strcmp(type, "PMTK705"))
+	{
+		return false;
+	}	
 	return true;
 }
+
+//$PMTK010,Type*CS<CR><LF>
+//   Type: The system message type.
+//   "0", UNKNOWN
+//   "1", STARTUP
+//   "2", Notification for the host aiding EPO. 
+//   "3", Notification for the transition to Normal mode completes successfully.
+//[Example]
+//   $PMTK010,001*2E<CR><LF>
+bool nmea_parse_mtk_start(NMEASentenceStart* p_frame, const char* p_sentence)
+{
+	char type[MAX_TYPE_LEN] = {0};
+	if(!nmea_scan(p_sentence, "ti",
+		  type,
+		  &p_frame->system_message_type))
+	{
+		return false;
+	}
+	if (GM_strcmp(type, "PMTK010"))
+	{
+		return false;
+	}
+	return true;
+}
+
 
 
 bool nmea_parse_td_ack(U16* p_cmd, const char* p_sentence, const U16 len)

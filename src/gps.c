@@ -97,6 +97,8 @@ typedef struct
 	//启动时间
 	time_t power_on_time;
 
+	time_t mtk_start_time;
+
 	time_t last_rcv_time;
 
 	bool push_data_enbale;
@@ -214,6 +216,8 @@ static void on_received_gga(const NMEASentenceGGA gga);
 
 static void on_received_gsa(const NMEASentenceGSA gsa);
 
+static void on_received_fixed_state(const NMEAGSAFixType fix_type);
+
 static on_received_gsv(const NMEASentenceGSV gsv);
 
 static void on_received_rmc(const NMEASentenceRMC rmc);
@@ -233,6 +237,9 @@ static void calc_alcr_by_speed(GPSData gps_info);
 static void check_over_speed_alarm(float speed);
 
 static void reopen_gps(void);
+
+static void request_write_time(void);
+
 
 
 
@@ -277,6 +284,7 @@ static void clear_data(void)
 	s_gps.state_record.true_state_hold_seconds = 0;
 	s_gps.state_record.false_state_hold_seconds = 0;
 	s_gps.power_on_time = 0;
+	s_gps.mtk_start_time = 0;
     s_gps.last_rcv_time = 0;
 	s_gps.push_data_enbale = false;
 	s_gps.fix_time = 0;
@@ -423,7 +431,7 @@ GM_ERRCODE gps_power_on(bool push_data_enbale)
 
     hard_ware_awake();
 	
-	GM_StartTimer(GM_TIMER_GPS_CHECK_RECEIVED, TIM_GEN_1SECOND*5, check_has_received_data);
+	GM_StartTimer(GM_TIMER_GPS_CHECK_RECEIVED, TIM_GEN_1SECOND*10, check_has_received_data);
 	GM_StartTimer(GM_TIMER_GPS_CHECK_STATE, TIM_GEN_1SECOND*60, check_fix_state);
 	return hard_ware_open_gps();
 }
@@ -471,45 +479,45 @@ static void check_fix_state(void)
 static void reopen_gps(void)
 {
 	bool push_data_enbale = s_gps.push_data_enbale;
+	JsonObject* p_log_root = json_create();
+
+	LOG(INFO,"reopen_gps");
 	
 	hard_ware_close_gps();
 	clear_data();
 	s_gps.push_data_enbale = push_data_enbale;
 	GM_SysMsdelay(100);
 	hard_ware_open_gps();
+	s_gps.internal_state = GM_GPS_STATE_WAIT_VERSION;
 	s_gps.power_on_time = util_clock();
-	GM_StartTimer(GM_TIMER_GPS_CHECK_RECEIVED, TIM_GEN_1SECOND*5, check_has_received_data);
+	GM_StartTimer(GM_TIMER_GPS_CHECK_RECEIVED, TIM_GEN_1SECOND*1, check_has_received_data);
 	GM_StartTimer(GM_TIMER_GPS_CHECK_STATE, TIM_GEN_1SECOND*60, check_fix_state);
+	
+	
+	json_add_string(p_log_root, "event", "reopen_gps");
+	json_add_int(p_log_root, "AGPS time late", util_clock() - s_gps.mtk_start_time);
+	log_service_upload(INFO,p_log_root);
 	return;
 }
 
-GM_ERRCODE gps_write_agps_info(const float lng,const float lat,const U8 leap_sencond)
+GM_ERRCODE gps_write_agps_info(const float lng,const float lat,const U8 leap_sencond,const U32 data_start_time)
 {
 	ST_Time utc_time;
 	GM_ERRCODE ret = GM_SUCCESS;
     U8 reopen_gps_time = 0;
-	
-    LOG(INFO,"gps_write_agps_info,current state=%d,dev_type=%d",s_gps.internal_state,s_gps.gpsdev_type);
-	if (s_gps.internal_state != GM_GPS_STATE_WAIT_APGS_TIME || GM_GPS_TYPE_UNKNOWN == s_gps.gpsdev_type)
-	{
-		return GM_ERROR_STATUS;
-	}
 
-	//如果GPS芯片启动超过30秒了，AGPS才准备好，那么需要重启GPS芯片AGPS才有用
+	//如果GPS芯片启动超过10秒了，AGPS才准备好，那么需要重启GPS芯片AGPS才有用
     config_service_get(CFG_REOPEN_GSP_TIME, TYPE_BYTE, &reopen_gps_time, sizeof(reopen_gps_time));
     //如果读取的配置值很小，恢复默认值
     if(reopen_gps_time < 5 )
     {
-        reopen_gps_time = 30;
+        reopen_gps_time = 9;
         config_service_set(CFG_REOPEN_GSP_TIME, TYPE_BYTE, &reopen_gps_time, sizeof(reopen_gps_time));
     }
 
-	if((util_clock() - s_gps.power_on_time) > reopen_gps_time && GM_GPS_OFF != s_gps.state)
+	if((util_clock() - s_gps.mtk_start_time) > reopen_gps_time && GM_GPS_OFF != s_gps.state && s_gps.gpsdev_type == GM_GPS_TYPE_MTK_EPO)
 	{
-		JsonObject* p_log_root = json_create();
-		json_add_string(p_log_root, "event", ("AGPS late"));
-		json_add_int(p_log_root, "AGPS time", util_clock() - s_gps.power_on_time);
-		log_service_upload(INFO,p_log_root);
+		LOG(INFO,"reopen_gps,clock=%d,mtk_start_time=%d,reopen_gps_time=%d,state=%d",util_clock(),s_gps.mtk_start_time,reopen_gps_time,s_gps.state);
 		reopen_gps();
 		return GM_ERROR_STATUS;
 	}
@@ -573,7 +581,7 @@ GM_ERRCODE gps_write_agps_data(const U16 seg_index, const U8* p_data, const U16 
 	else
 	{
 		LOG(INFO,"gps_write_agps_data,seg_index=%d,len=%d",seg_index,len);
-		LOG_HEX((const char *)p_data,len);
+		//LOG_HEX((const char *)p_data,len);
 	}
 	
 	switch (s_gps.gpsdev_type)
@@ -628,7 +636,7 @@ GM_ERRCODE gps_power_off(void)
 	GM_StopTimer(GM_TIMER_GPS_CHECK_RECEIVED);
 	uart_close_port(GM_UART_GPS);
 	led_set_gps_state(GM_LED_OFF);
-
+	
 	uart_close_port(GM_UART_DEBUG);
 	hard_ware_close_gps();
 	hard_ware_sleep();
@@ -807,7 +815,7 @@ static void write_mtk_config(void)
 	config_service_get(CFG_MIN_SNR, TYPE_BYTE, &min_snr, sizeof(min_snr));
 	if(system_state_is_cold_boot())
 	{
-		gps_write_mtk_cmd("PMTK,104");
+		gps_write_mtk_cmd("PMTK104");
 		system_state_set_cold_boot(false);
 	}
 
@@ -848,6 +856,12 @@ static void write_mtk_config(void)
 	LOG(INFO,"write_mtk_config");
 }
 
+static void request_write_time(void)
+{
+	s_gps.internal_state = GM_GPS_STATE_WAIT_APGS_TIME;
+	agps_service_require_to_gps(AGPS_TO_GPS_LNGLAT_TIME,false);
+	LOG(INFO,"request_mtk_time");
+}
 void gps_on_rcv_uart_data(char* p_data, const U16 len)
 {
 	bool has_agps_data_left = false;
@@ -864,8 +878,7 @@ void gps_on_rcv_uart_data(char* p_data, const U16 len)
 				set_device_type(GM_GPS_TYPE_AT_AGPS);
 				if (s_gps.internal_state < GM_GPS_STATE_WAIT_APGS_TIME)
 				{
-					s_gps.internal_state = GM_GPS_STATE_WAIT_APGS_TIME;
-					agps_service_require_to_gps(AGPS_TO_GPS_LNGLAT_TIME,false);
+					request_write_time();
 					LOG(DEBUG,"NMEA_SENTENCE_TXT");
 				}	
 	        }
@@ -883,8 +896,7 @@ void gps_on_rcv_uart_data(char* p_data, const U16 len)
 				set_device_type(GM_GPS_TYPE_TD_AGPS);
 				if (s_gps.internal_state < GM_GPS_STATE_WAIT_APGS_TIME)
 				{
-					s_gps.internal_state = GM_GPS_STATE_WAIT_APGS_TIME;
-					agps_service_require_to_gps(AGPS_TO_GPS_LNGLAT_TIME,false);
+					request_write_time();
 					LOG(DEBUG,"NMEA_SENTENCE_INF");
 				}	   
             }
@@ -905,6 +917,22 @@ void gps_on_rcv_uart_data(char* p_data, const U16 len)
 				{
 					write_mtk_epo_pos();
 					LOG(INFO,"Received MTK_TIME_ACK");
+					
+					/*if(MTK_ACTION_SUCCEED == mtk_ack.ack_result)
+					{
+						write_mtk_epo_pos();
+						LOG(INFO,"Received MTK_TIME_ACK");
+					}
+					else if(MTK_ACTION_FAILED == mtk_ack.ack_result)
+					{
+						LOG(INFO,"Received MTK_TIME_ACTION_FAILED");
+						reopen_gps();
+					}
+					else
+					{
+						LOG(WARN,"Failed to action MTK command,send cmd again.");
+						GM_StartTimer(GM_TIMER_GPS_RESEND_TIME, TIM_GEN_1SECOND, request_write_time);
+					}*/
 				}
 				else if(MTK_POS_ACK == mtk_ack.ack_type)
 				{
@@ -945,29 +973,36 @@ void gps_on_rcv_uart_data(char* p_data, const U16 len)
 		// MTK GPS work OK,可以发送EPO
     	case NMEA_SENTENCE_MTK_START:  
     	{
-			if (s_gps.internal_state < GM_GPS_STATE_WAIT_APGS_TIME)
+    		NMEASentenceStart frame;
+    		if(nmea_parse_mtk_start(&frame, p_data) && frame.system_message_type == 2)
 			{
-				write_mtk_config();
-				set_device_type(GM_GPS_TYPE_MTK_EPO);
-				s_gps.internal_state = GM_GPS_STATE_WAIT_APGS_TIME;
-				agps_service_require_to_gps(AGPS_TO_GPS_LNGLAT_TIME,false);
-				
-				LOG(INFO,"NMEA_SENTENCE_MTK_START");
-			}	
+				s_gps.mtk_start_time = util_clock();
+				if (s_gps.internal_state < GM_GPS_STATE_WAIT_APGS_TIME)
+				{
+					write_mtk_config();
+					set_device_type(GM_GPS_TYPE_MTK_EPO);
+					request_write_time();
+					LOG(INFO,"NMEA_SENTENCE_MTK_START");
+				}	
+			}
+			else
+			{
+                LOG(DEBUG,"sentence is not parsed:%s",p_data);
+            }
 		}
 			break;
 		
 		// MTK GPS version,版本号
     	case NMEA_SENTENCE_MTK_VER:   
     	{
-			LOG(INFO,"Received MTK version");
-			if (s_gps.internal_state < GM_GPS_STATE_WAIT_APGS_TIME)
+			if (nmea_parse_mtk_ver(&s_gps.frame_ver,p_data))
 			{
-				LOG(DEBUG,"NMEA_SENTENCE_MTK_VER");
-				set_device_type(GM_GPS_TYPE_MTK_EPO);
-				s_gps.internal_state = GM_GPS_STATE_WAIT_APGS_TIME;
-				agps_service_require_to_gps(AGPS_TO_GPS_LNGLAT_TIME,false);
+				LOG(INFO,"Received MTK version:%s",s_gps.frame_ver.ver);
 			}
+			else
+			{
+                LOG(DEBUG,"sentence is not parsed:%s",p_data);
+            }
 		}
 			break;
 		
@@ -1026,8 +1061,7 @@ void gps_on_rcv_uart_data(char* p_data, const U16 len)
 				if (s_gps.internal_state < GM_GPS_STATE_WAIT_APGS_TIME)
 				{
 					LOG(DEBUG,"NMEA_SENTENCE_TD_VER");
-					s_gps.internal_state = GM_GPS_STATE_WAIT_APGS_TIME;
-					agps_service_require_to_gps(AGPS_TO_GPS_LNGLAT_TIME,false);
+					request_write_time();
 					open_td_vtg();
 				}	
             }
@@ -1104,8 +1138,7 @@ void gps_on_rcv_uart_data(char* p_data, const U16 len)
 				if (s_gps.internal_state < GM_GPS_STATE_WAIT_APGS_TIME)
 				{
 					LOG(DEBUG,"NMEA_SENTENCE_AT_VER");
-					s_gps.internal_state = GM_GPS_STATE_WAIT_APGS_TIME;
-					agps_service_require_to_gps(AGPS_TO_GPS_LNGLAT_TIME,false);
+					request_write_time();
 				}	
             }
             else
@@ -1342,8 +1375,17 @@ static void on_received_gga(const NMEASentenceGGA gga)
 
 static void on_received_gsa(const NMEASentenceGSA gsa)
 {
+	if (s_gps.gpsdev_type != GM_GPS_TYPE_MTK_EPO)
+	{
+		on_received_fixed_state(gsa.fix_type);
+	}
+	s_gps.hdop = nmea_tofloat(&gsa.hdop);
+}
+
+static void on_received_fixed_state(const NMEAGSAFixType fix_type)
+{
 	static U8 is_not_3d_seconds = 0;
-	if (NMEA_GPGSA_FIX_NONE == gsa.fix_type)
+	if (NMEA_GPGSA_FIX_NONE == fix_type)
 	{
 		is_not_3d_seconds++;
 		if(is_not_3d_seconds >= SECONDS_PER_MIN)
@@ -1353,7 +1395,7 @@ static void on_received_gsa(const NMEASentenceGSA gsa)
 			s_gps.is_diff = false;
 		}
 	}
-	else if (NMEA_GPGSA_FIX_2D == gsa.fix_type)
+	else if (NMEA_GPGSA_FIX_2D == fix_type)
 	{
 		is_not_3d_seconds++;
 		if(is_not_3d_seconds >= SECONDS_PER_MIN)
@@ -1362,7 +1404,7 @@ static void on_received_gsa(const NMEASentenceGSA gsa)
 			s_gps.is_3d = false;
 		}
 	}
-	else if (NMEA_GPGSA_FIX_3D == gsa.fix_type)
+	else if (NMEA_GPGSA_FIX_3D == fix_type)
 	{
 		s_gps.is_fix = true;
 		s_gps.is_3d = true;
@@ -1370,10 +1412,9 @@ static void on_received_gsa(const NMEASentenceGSA gsa)
 	}
 	else 
 	{
-		LOG(WARN, "Unknown fix_type:%d", gsa.fix_type);
+		LOG(WARN, "Unknown fix_type:%d", fix_type);
 	}
 	check_fix_state_change();
-	s_gps.hdop = nmea_tofloat(&gsa.hdop);
 }
 
 static on_received_gsv(const NMEASentenceGSV gsv)
@@ -1547,8 +1588,13 @@ static void on_received_rmc(const NMEASentenceRMC rmc)
 	float lat_avg = 0;
 	float lng_avg = 0;
 	float speed_avg = 0;
-	
 	time_t seconds_from_reboot = util_clock();
+
+	if (s_gps.gpsdev_type == GM_GPS_TYPE_MTK_EPO)
+	{
+		on_received_fixed_state(rmc.valid?NMEA_GPGSA_FIX_3D:NMEA_GPGSA_FIX_NONE);
+	}
+
 
 	if (s_gps.state < GM_GPS_FIX_3D)
 	{

@@ -1218,6 +1218,7 @@ GM_ERRCODE hard_ware_sleep(void)
 {
 	if (0 == GM_SleepEnable())
 	{
+		LOG(ERROR,"Failed to GM_SleepEnable.");
 		return GM_HARD_WARE_ERROR;
 	}
 	else
@@ -1250,6 +1251,7 @@ GM_ERRCODE hard_ware_awake(void)
 {
 	if (0 == GM_SleepDisable())
 	{
+		LOG(ERROR,"Failed to hard_ware_awake.");
 		return GM_HARD_WARE_ERROR;
 	}
 	else

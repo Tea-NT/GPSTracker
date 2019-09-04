@@ -345,6 +345,7 @@ static void gps_port_on_receive(void* msg)
 		{
 			//先插入到缓存中,因为可能不是一个完整的语句
 			fifo_insert(&g_uart.UARTParas[GM_UART_GPS].rcv_fifo, (U8*)g_uart.UARTParas[GM_UART_GPS].rcv_buff, read_len);
+			//LOG_HEX(g_uart.UARTParas[GM_UART_GPS].rcv_buff,read_len);
 			//可能有多个语句
 			do
 			{

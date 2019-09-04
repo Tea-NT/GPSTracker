@@ -70,10 +70,10 @@ typedef struct
     bit16——断电报警,
     bit17——电池低电报警
     bit18——电源电压过低报警
-    bit19——震动报警
-    bit20——超速报警
-    bit21——伪基站报警
-    bit22——电源电压过高报警
+    bit19——电源电压过高报警
+    bit20——震动报警
+    bit21——超速报警
+    bit22——伪基站报警
     bit23——碰撞报警
     bit24——急加速报警
     bit25——急减速报警
@@ -133,8 +133,8 @@ typedef struct
 	//外部电池电压等级
 	U8 extern_battery_voltage_grade;
 
-	//历程（单位:公里）
-	U32 mileage;
+	//历程（单位:米）
+	U64 mileage;
 
 	//当前可执行文件的校验合
 	U32 check_sum;
@@ -455,15 +455,7 @@ GM_ERRCODE system_state_set_vehicle_state(const VehicleState vehicle_state)
 	{
 		LOG(INFO, "vehicle_state from %d to %d", s_system_state.vehicle_state,vehicle_state);
 		s_system_state.vehicle_state = vehicle_state;
-
-        if (VEHICLE_STATE_STATIC == vehicle_state)
-        {
-            system_state_set_move_alarm(false);
-        }
-        else
-        {
-		    return save_state_to_file();
-        }
+		return save_state_to_file();
 	}
 	return GM_SUCCESS;
 }
@@ -882,18 +874,13 @@ GM_ERRCODE system_state_set_battery_low_voltage_alarm(bool state)
 	return save_state_to_file();
 }
 
-bool system_state_get_shake_alarm(void)
+GM_ERRCODE system_state_set_high_voltage_alarm(bool state)
 {
-	return GET_BIT19(s_system_state.status_bits);
-}
-
-GM_ERRCODE system_state_set_shake_alarm(bool state)
-{
-	if (state == system_state_get_shake_alarm())
+	if (state == system_state_get_high_voltage_alarm())
 	{
 		return GM_SUCCESS;
 	}
-
+	
 	//状态发生变化，触发一次心跳
 	gps_service_heart_atonce();
 
@@ -905,18 +892,19 @@ GM_ERRCODE system_state_set_shake_alarm(bool state)
 	{
 		CLR_BIT19(s_system_state.status_bits);
 	}
-	LOG(INFO,"system_state_set_shake_alarm");
+	LOG(INFO,"system_state_set_high_voltage_alarm");
 	return save_state_to_file();
 }
 
-bool system_state_get_overspeed_alarm(void)
+
+bool system_state_get_shake_alarm(void)
 {
 	return GET_BIT20(s_system_state.status_bits);
 }
 
-GM_ERRCODE system_state_set_overspeed_alarm(bool state)
+GM_ERRCODE system_state_set_shake_alarm(bool state)
 {
-	if (state == system_state_get_overspeed_alarm())
+	if (state == system_state_get_shake_alarm())
 	{
 		return GM_SUCCESS;
 	}
@@ -932,22 +920,22 @@ GM_ERRCODE system_state_set_overspeed_alarm(bool state)
 	{
 		CLR_BIT20(s_system_state.status_bits);
 	}
-	LOG(INFO,"system_state_set_overspeed_alarm");
+	LOG(INFO,"system_state_set_shake_alarm");
 	return save_state_to_file();
 }
 
-bool system_state_get_fakecell_alarm(void)
+bool system_state_get_overspeed_alarm(void)
 {
 	return GET_BIT21(s_system_state.status_bits);
 }
 
-GM_ERRCODE system_state_set_fakecell_alarm(bool state)
+GM_ERRCODE system_state_set_overspeed_alarm(bool state)
 {
-	if (state == system_state_get_fakecell_alarm())
+	if (state == system_state_get_overspeed_alarm())
 	{
 		return GM_SUCCESS;
 	}
-	
+
 	//状态发生变化，触发一次心跳
 	gps_service_heart_atonce();
 
@@ -959,18 +947,18 @@ GM_ERRCODE system_state_set_fakecell_alarm(bool state)
 	{
 		CLR_BIT21(s_system_state.status_bits);
 	}
-	LOG(INFO,"system_state_set_fakecell_alarm");
+	LOG(INFO,"system_state_set_overspeed_alarm");
 	return save_state_to_file();
 }
 
-bool system_state_get_high_voltage_alarm(void)
+bool system_state_get_fakecell_alarm(void)
 {
 	return GET_BIT22(s_system_state.status_bits);
 }
 
-GM_ERRCODE system_state_set_high_voltage_alarm(bool state)
+GM_ERRCODE system_state_set_fakecell_alarm(bool state)
 {
-	if (state == system_state_get_high_voltage_alarm())
+	if (state == system_state_get_fakecell_alarm())
 	{
 		return GM_SUCCESS;
 	}
@@ -986,10 +974,14 @@ GM_ERRCODE system_state_set_high_voltage_alarm(bool state)
 	{
 		CLR_BIT22(s_system_state.status_bits);
 	}
-	LOG(INFO,"system_state_set_high_voltage_alarm");
+	LOG(INFO,"system_state_set_fakecell_alarm");
 	return save_state_to_file();
 }
 
+bool system_state_get_high_voltage_alarm(void)
+{
+	return GET_BIT19(s_system_state.status_bits);
+}
 
 bool system_state_get_collision_alarm(void)
 {
@@ -1182,7 +1174,7 @@ GM_ERRCODE system_state_set_move_alarm(bool state)
 	return save_state_to_file();
 }
 
-void system_state_set_mileage(U32 mileage)
+void system_state_set_mileage(U64 mileage)
 {
 	if (mileage == s_system_state.mileage)
 	{
@@ -1196,7 +1188,7 @@ void system_state_set_mileage(U32 mileage)
 	}
 }
 
-U32 system_state_get_mileage(void)
+U64 system_state_get_mileage(void)
 {
 	return s_system_state.mileage;
 }

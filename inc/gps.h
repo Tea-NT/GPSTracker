@@ -150,7 +150,7 @@ GM_ERRCODE gps_power_on(bool push_data_enbale);
  * Return:	   GM_SUCCESS——成功；其它错误码——失败
  * Others:	   状态>=GM_GPS_STATE_INITED时可以写入
  */
-GM_ERRCODE gps_write_agps_info(const float lng,const float lat,const U8 leap_sencond);
+GM_ERRCODE gps_write_agps_info(const float lng,const float lat,const U8 leap_sencond,const U32 data_start_time);
 
 /**
  * Function:   写入agps（epo）数据

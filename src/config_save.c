@@ -1077,7 +1077,7 @@ static void config_service_set_factory_deault(void)
     value_u16 = GPS_NOT_FIXED_DEFAULT;
     config_service_set(CFG_WAIT_GPS_TIME, TYPE_SHORT, &value_u16, sizeof(value_u16));
 
-    value_u8 = 30;
+    value_u8 = 9;
     config_service_set(CFG_REOPEN_GSP_TIME, TYPE_BYTE, &value_u8, sizeof(value_u8));
 
     value_u16 = 720;

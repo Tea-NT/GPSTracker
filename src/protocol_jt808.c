@@ -674,8 +674,8 @@ static void protocol_jt_pack_additional_mileage(u8 *pdata, u16 *idx, u16 len, u1
     
     pdata[(*idx)++] = 0x01;
     pdata[(*idx)++] = 0x04;   
-    dwtmp = system_state_get_mileage() / 100;  //lzTODO 实现里程统计
-
+    dwtmp = system_state_get_mileage() / 100;
+    
     pdata[(*idx)++] = BHIGH_BYTE(WHIGH_WORD(dwtmp));
     pdata[(*idx)++] = BLOW_BYTE(WHIGH_WORD(dwtmp));
     pdata[(*idx)++] = BHIGH_BYTE(WLOW_WORD(dwtmp));
@@ -745,11 +745,22 @@ static void protocol_jt_pack_device_status(u8 *pdata, u16 *idx, u16 len, u16 *re
         SET_BIT0(device_status);
     }
 
-    
-    
-    if (p_data->gps_time != 0)
+
+    //休眠前, 按是否定位设置定位标志, 体眠时, 按之前是否有定位设置定位标志
+    if(GM_SYSTEM_STATE_WORK == system_state_get_work_state())
     {
-        SET_BIT1(device_status);
+        if (gps_is_fixed())
+        {
+            SET_BIT1(device_status);
+        }
+    }
+    else
+    {
+        GPSData gps_data;
+        if (gps_get_last_data(&gps_data))
+        {
+            SET_BIT1(device_status);
+        }
     }
     
     // 纬度 负数为南纬
@@ -1333,6 +1344,8 @@ static void protocol_jt_parse_set_param(U8* pdata, u16 len)
 
     u16 value_u16;
     u8 value_u8;
+    u32 value_u32;
+    u64 value_u64;
     
     s_jt_msg_save.msg_id = ((u16)pdata[1]<<8)+pdata[2];
     s_jt_msg_save.server_serial = ((u16)pdata[11]<<8)+pdata[12];
@@ -1474,6 +1487,11 @@ static void protocol_jt_parse_set_param(U8* pdata, u16 len)
             case JT_PARAM_BRAND_COLOR:
                 value_u16 = (u16)get_value_by_length(&pdata[data_start], para_len);
                 config_service_set(CFG_JT_VEHICLE_COLOR, TYPE_SHORT, &value_u16, sizeof(value_u16));
+                break;
+            case JT_PARAM_MILIAGE:
+                value_u32 = get_value_by_length(&pdata[data_start], para_len);
+                value_u64 = value_u32 * 100;
+                system_state_set_mileage(value_u64);
                 break;
             default:
                 break;
@@ -1729,6 +1747,7 @@ static void protocol_jt_pack_param_info(u8 *pdata, u16 *idx, u16 len, u16 *retur
     u16 value_u16;
     u8 value_u8;
     u8 value_str[26];
+    u32 value_u32 = 0;
     
     pdata[(*idx)++] = BHIGH_BYTE(s_jt_msg_save.server_serial);
     pdata[(*idx)++] = BLOW_BYTE(s_jt_msg_save.server_serial);
@@ -1795,8 +1814,8 @@ static void protocol_jt_pack_param_info(u8 *pdata, u16 *idx, u16 len, u16 *retur
     protocol_jt_pack_item_num(pdata, idx, 0x0073, 0, 4);
     protocol_jt_pack_item_num(pdata, idx, 0x0074, 0, 4);
 
-    
-    protocol_jt_pack_item_num(pdata, idx, JT_PARAM_MILIAGE, 0, 4);
+    value_u32 = system_state_get_mileage()/100;
+    protocol_jt_pack_item_num(pdata, idx, JT_PARAM_MILIAGE, value_u32, 4);
 
     config_service_get(CFG_JT_PROVINCE, TYPE_SHORT, &value_u16, sizeof(value_u16));
     protocol_jt_pack_item_num(pdata, idx, JT_PARAM_PROVINCE, value_u16, 4);

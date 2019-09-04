@@ -1608,7 +1608,7 @@ bool agps_service_require_to_gps(AgpsToGpsEnum type,bool re_download)
 
     if(type == AGPS_TO_GPS_LNGLAT_TIME)
     {
-        ret = gps_write_agps_info(s_agps_file_inuse.lng, s_agps_file_inuse.lat, s_agps_file_inuse.leap_seconds);
+        ret = gps_write_agps_info(s_agps_file_inuse.lng, s_agps_file_inuse.lat, s_agps_file_inuse.leap_seconds,s_agps_file_inuse.start_time);
         seg_index = 0;
         LOG(DEBUG,"clock(%d) agps_service_require_to_gps write lng(%f),lat(%f),leap(%d).",
             util_clock(),s_agps_file_inuse.lng, s_agps_file_inuse.lat, s_agps_file_inuse.leap_seconds);
@@ -1722,7 +1722,7 @@ static void agps_service_check_and_read_file(void)
             {
                 print_len = s_agps_file_inuse.len - print_start - 1;
             }
-            log_service_print_hex((const char *)&s_agps_file_inuse.data[print_start], print_len);
+            //log_service_print_hex((const char *)&s_agps_file_inuse.data[print_start], print_len);
             if(loop_count > 4)
             {
                 break;

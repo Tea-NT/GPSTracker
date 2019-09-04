@@ -75,9 +75,9 @@ typedef enum
 typedef enum
 {
     NO_COLLISION = 0,
-    SLIGHT_COLLISION = 1,
-    NORMAL_COLLISION = 2,
-    SERIOUS_COLLISION = 3
+    SLIGHT_COLLISION = 0x2000,
+    NORMAL_COLLISION = 0x4000,
+    SERIOUS_COLLISION = 0x6000
 }COLLISION_LEVEL;
 	
 //角度变化超过30度认为发生了突变

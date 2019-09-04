@@ -1566,8 +1566,13 @@ S8 config_service_get_zone(void)
 
 bool config_service_is_main_server_goome(void)
 {
-    char *addr;
-    addr = config_service_get_pointer(CFG_SERVERADDR);
+    /*char *addr;
+    addr = config_service_get_pointer(CFG_SERVERADDR);*/
+    char addr[50];
+	
+	GM_memset(addr, 0, sizeof(addr));
+	GM_memcpy(addr, config_service_get_pointer(CFG_SERVERADDR), GM_strlen(config_service_get_pointer(CFG_SERVERADDR)));
+	util_string_lower((u8 *)&addr, GM_strlen(addr));
     if (GM_strstr(addr, GOOME_GPSOO_DNS) > 0)
     {
         return true;

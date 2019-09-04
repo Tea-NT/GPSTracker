@@ -1516,7 +1516,7 @@ static void check_static_or_run(float vehicle_horizontal_aclr_magnitude)
 			}
 			system_state_set_vehicle_state(VEHICLE_STATE_RUN);
 		}
-		LOG(INFO,"RUN:aclr=%f,thr=%f",vehicle_horizontal_aclr_magnitude,s_gsensor.threshold.run_thr);
+		LOG(DEBUG,"RUN:aclr=%f,thr=%f",vehicle_horizontal_aclr_magnitude,s_gsensor.threshold.run_thr);
   	}
     //2、运动转为静止
     else if (vehicle_horizontal_aclr_magnitude <= s_gsensor.threshold.static_thr)

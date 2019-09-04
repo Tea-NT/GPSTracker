@@ -104,7 +104,15 @@ typedef struct
 typedef struct 
 {
 	char ver[64];
+	char release_str[12];
+	U32 build_id;
 }NMEASentenceVER;
+
+typedef struct 
+{
+	S32 system_message_type;
+}NMEASentenceStart;
+
 
 //$GNRMC,081347.00,A,2232.51905,N,11357.10992,E,2.353,,190319,,,A,V*12
 typedef struct 
@@ -278,9 +286,18 @@ typedef enum
 	MTK_TTFF_ACK = 257,
 }MTKAckType;
 
+typedef enum
+{
+	MTK_INVALID_CMD = 0,     //Invalid command / packet.
+	MTK_UNSUPPORTED_CMD = 1, //Unsupported command / packet type
+	MTK_ACTION_FAILED = 2,   //Valid command / packet, but action failed
+	MTK_ACTION_SUCCEED = 3,  //Valid command / packet, and action succeeded
+}MTKAckResult;
+
 typedef struct
 {
     MTKAckType ack_type;
+	MTKAckResult ack_result;
 }NMEASentenceMTKACK;
 
 
@@ -317,6 +334,7 @@ bool nmea_parse_vtg(NMEASentenceVTG* p_frame, const char* p_sentence);
 bool nmea_parse_zda(NMEASentenceZDA* p_frame, const char* p_sentence);
 bool nmea_parse_mtk_ack(NMEASentenceMTKACK* p_frame, const char* p_sentence);
 bool nmea_parse_mtk_ver(NMEASentenceVER* p_frame, const char* p_sentence);
+bool nmea_parse_mtk_start(NMEASentenceStart* p_frame, const char* p_sentence);
 bool nmea_parse_td_ack(U16* p_cmd, const char* p_sentence, const U16 len);
 bool nmea_parse_td_ver(NMEASentenceVER* p_frame, const char* p_sentence, const U16 len);
 bool nmea_parse_at_ack(U16* p_cmd, const char* p_sentence, const U16 len);
