@@ -44,6 +44,8 @@
 #include "led.h"
 #include "gsm.h"
 #include "utility.h"
+#include "gps_kalman_filter.h"
+
 
 
 #define GPS_BUFF_LEN 50
@@ -433,6 +435,9 @@ GM_ERRCODE gps_power_on(bool push_data_enbale)
 	
 	GM_StartTimer(GM_TIMER_GPS_CHECK_RECEIVED, TIM_GEN_1SECOND*10, check_has_received_data);
 	GM_StartTimer(GM_TIMER_GPS_CHECK_STATE, TIM_GEN_1SECOND*60, check_fix_state);
+
+	gps_kalman_filter_create(1.0);
+	
 	return hard_ware_open_gps();
 }
 
@@ -641,6 +646,7 @@ GM_ERRCODE gps_power_off(void)
 	hard_ware_close_gps();
 	hard_ware_sleep();
 	s_gps.sleep_time = util_clock();
+	gps_kalman_filter_destroy();
 	return GM_SUCCESS;
 }
 
@@ -917,22 +923,6 @@ void gps_on_rcv_uart_data(char* p_data, const U16 len)
 				{
 					write_mtk_epo_pos();
 					LOG(INFO,"Received MTK_TIME_ACK");
-					
-					/*if(MTK_ACTION_SUCCEED == mtk_ack.ack_result)
-					{
-						write_mtk_epo_pos();
-						LOG(INFO,"Received MTK_TIME_ACK");
-					}
-					else if(MTK_ACTION_FAILED == mtk_ack.ack_result)
-					{
-						LOG(INFO,"Received MTK_TIME_ACTION_FAILED");
-						reopen_gps();
-					}
-					else
-					{
-						LOG(WARN,"Failed to action MTK command,send cmd again.");
-						GM_StartTimer(GM_TIMER_GPS_RESEND_TIME, TIM_GEN_1SECOND, request_write_time);
-					}*/
 				}
 				else if(MTK_POS_ACK == mtk_ack.ack_type)
 				{
@@ -1343,26 +1333,29 @@ void gps_on_rcv_uart_data(char* p_data, const U16 len)
 
 static void on_received_gga(const NMEASentenceGGA gga)
 {
-	if (gga.fix_quality == 0)
+	if (s_gps.gpsdev_type != GM_GPS_TYPE_MTK_EPO)
 	{
-		s_gps.is_fix = false;
-		s_gps.is_3d = false;
-		s_gps.is_diff = false;
-	}
-	//中科微的航迹推算为6
-	else if(gga.fix_quality == 1 || gga.fix_quality == 6)
-	{
-		s_gps.is_fix = true;
-		s_gps.is_diff = false;
-	}
-	else if(gga.fix_quality == 2)
-	{
-		s_gps.is_fix = true;
-		s_gps.is_diff = true;
-	}
-	else
-	{
-		LOG(ERROR, "Unknown fix quality:%d", gga.fix_quality);
+		if (gga.fix_quality == 0)
+		{
+			s_gps.is_fix = false;
+			s_gps.is_3d = false;
+			s_gps.is_diff = false;
+		}
+		//中科微的航迹推算为6
+		else if(gga.fix_quality == 1 || gga.fix_quality == 6)
+		{
+			s_gps.is_fix = true;
+			s_gps.is_diff = false;
+		}
+		else if(gga.fix_quality == 2)
+		{
+			s_gps.is_fix = true;
+			s_gps.is_diff = true;
+		}
+		else
+		{
+			LOG(ERROR, "Unknown fix quality:%d", gga.fix_quality);
+		}
 	}
 	
 	s_gps.satellites_tracked = gga.satellites_tracked;
@@ -1377,38 +1370,28 @@ static void on_received_gsa(const NMEASentenceGSA gsa)
 {
 	if (s_gps.gpsdev_type != GM_GPS_TYPE_MTK_EPO)
 	{
-		on_received_fixed_state(gsa.fix_type);
+		on_received_fixed_state((NMEAGSAFixType)gsa.fix_type);
 	}
 	s_gps.hdop = nmea_tofloat(&gsa.hdop);
 }
 
 static void on_received_fixed_state(const NMEAGSAFixType fix_type)
 {
-	static U8 is_not_3d_seconds = 0;
 	if (NMEA_GPGSA_FIX_NONE == fix_type)
 	{
-		is_not_3d_seconds++;
-		if(is_not_3d_seconds >= SECONDS_PER_MIN)
-		{
-			s_gps.is_fix = false;
-			s_gps.is_3d = false;
-			s_gps.is_diff = false;
-		}
+		s_gps.is_fix = false;
+		s_gps.is_3d = false;
+		s_gps.is_diff = false;
 	}
 	else if (NMEA_GPGSA_FIX_2D == fix_type)
 	{
-		is_not_3d_seconds++;
-		if(is_not_3d_seconds >= SECONDS_PER_MIN)
-		{
-			s_gps.is_fix = true;
-			s_gps.is_3d = false;
-		}
+		s_gps.is_fix = true;
+		s_gps.is_3d = false;
 	}
 	else if (NMEA_GPGSA_FIX_3D == fix_type)
 	{
 		s_gps.is_fix = true;
 		s_gps.is_3d = true;
-		is_not_3d_seconds = 0;
 	}
 	else 
 	{
@@ -1489,19 +1472,11 @@ static on_received_gsv(const NMEASentenceGSV gsv)
 		GM_memcpy(s_gps.snr_array, snr_array, sizeof(snr_array));
 		GM_memset(snr_array, 0, sizeof(snr_array));
 	}
-
-	//如果有AGPS，但是启动20秒后仍然没有一颗星可见，重启GPS
-	//if (((util_clock() - s_gps.power_on_time) > 20 + s_gps.agps_time) && s_gps.agps_time != 0 && s_gps.max_snr < 8 && !gps_is_fixed())
-	//{
-		//LOG(INFO,"reopen GPS because of no signal");
-		//reopen_gps();
-	//}
 }
 
 static void check_fix_state_change(void)
 {
-	U8 fix_time_min = (GM_GPS_TYPE_MTK_EPO == s_gps.gpsdev_type ? 2 : 10);
-	GM_CHANGE_ENUM change = util_check_state_change(s_gps.is_3d,&s_gps.state_record,fix_time_min,20);
+	GM_CHANGE_ENUM change = util_check_state_change(s_gps.is_3d,&s_gps.state_record,10,SECONDS_PER_MIN);
 	
 	if (GM_CHANGE_TRUE == change)
 	{
@@ -1596,14 +1571,14 @@ static void on_received_rmc(const NMEASentenceRMC rmc)
 	}
 
 
-	if (s_gps.state < GM_GPS_FIX_3D)
+	if (s_gps.state != GM_GPS_FIX_3D)
 	{
 		return;
 	}
 
 	if (seconds_from_reboot - s_gps.save_time >= 1)
 	{
-		bool if_smooth_track = false;
+		U8 filter_mode = 0;
 		gps_data.gps_time = nmea_get_utc_time(&rmc.date,&rmc.time);
 		gps_data.lat = nmea_tocoord(&rmc.latitude);
 		gps_data.lng = nmea_tocoord(&rmc.longitude);
@@ -1652,10 +1627,10 @@ static void on_received_rmc(const NMEASentenceRMC rmc)
 		circular_queue_en_queue_f(&s_gps.gps_speed_queue,gps_data.speed);
 		circular_queue_en_queue_f(&s_gps.gps_course_queue,gps_data.course);
 		
-		config_service_get(CFG_SMOOTH_TRACK, TYPE_BOOL, &if_smooth_track, sizeof(if_smooth_track));
-		if(if_smooth_track)
+		config_service_get(CFG_SMOOTH_TRACK, TYPE_BYTE, &filter_mode, sizeof(filter_mode));
+		if(filter_mode == 1)
 		{
-			LOG(DEBUG,"smooth track");
+			LOG(DEBUG,"Avage filter.");
 			//取前10秒（包括当前时间点）平均值
 			for(index = 0;index < 10;index++)
 			{
@@ -1683,6 +1658,22 @@ static void on_received_rmc(const NMEASentenceRMC rmc)
 			gps_data.lat = lat_avg;
 			gps_data.lng = lng_avg;
 			gps_data.speed = speed_avg;
+		}
+		else if(filter_mode == 2)
+		{
+			double lat_filted = 0;
+			double lng_filted = 0;
+			if(gps_kalman_filter_update(gps_data.lat, gps_data.lng,1.0))
+			{
+				gps_kalman_filter_read(&lat_filted,&lng_filted);
+				LOG(DEBUG,"Kalman filter:lat=%f,lng=%f,lat_filted=%f,lng_filted=%f",gps_data.lat,gps_data.lng,lat_filted,lng_filted);
+				gps_data.lat = lat_filted;
+				gps_data.lng = lng_filted;
+			}
+		}
+		else
+		{
+			LOG(DEBUG,"filter_mode:%d",filter_mode);
 		}
 		upload_gps_data(gps_data);
 	}

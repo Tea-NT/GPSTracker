@@ -195,8 +195,8 @@ typedef struct
     */
     u32 param_bits;
     
-    u8  reserved_u8_5;     // 休眠模式
-    u8  center_number[20];    // 中心号码
+    u8  filter_mode;        // 滤波算法：0——不滤波；1——算数平均滤波；2——卡尔曼滤波；3——扩展卡尔曼滤波
+    u8  center_number[20];  // 中心号码
     u8  user_number_1[16];  // 管理号码1
     u8  user_number_2[16];  // 管理号码2
     u8  user_number_3[16];  // 管理号码3
@@ -997,8 +997,8 @@ static void config_service_set_factory_deault(void)
 	value_u8 = false;
     config_service_set(CFG_IS_MOVEALARM_ENABLE, TYPE_BOOL, &value_u8, sizeof(value_u8));
 
-	value_u8 = true;
-    config_service_set(CFG_SMOOTH_TRACK, TYPE_BOOL, &value_u8, sizeof(value_u8));
+	value_u8 = 1;
+    config_service_set(CFG_SMOOTH_TRACK, TYPE_BYTE, &value_u8, sizeof(value_u8));
 
 	value_u8 = false;
     config_service_set(CFG_IS_ACLRALARM_ENABLE, TYPE_BOOL, &value_u8, sizeof(value_u8));
@@ -1728,16 +1728,6 @@ static void convert_cfg_to_para(GprsParaFileType *para)
         CLR_BIT22(para->param_bits);
     }
 
-    config_service_get(CFG_SMOOTH_TRACK, TYPE_BOOL, &value_u8, sizeof(value_u8));
-    if (value_u8)
-    {
-        SET_BIT23(para->param_bits);
-    }
-    else
-    {
-        CLR_BIT23(para->param_bits);
-    }
-
     config_service_get(CFG_BATTUPLOAD_DISABLE, TYPE_BYTE, &value_u8, sizeof(value_u8));
     if (value_u8)
     {
@@ -1806,6 +1796,10 @@ static void convert_cfg_to_para(GprsParaFileType *para)
     config_service_get(CFG_USER4_NUMBER, TYPE_STRING, para->user_number_4, sizeof(para->user_number_4));
 
 
+    
+    config_service_get(CFG_SMOOTH_TRACK, TYPE_BYTE, &value_u8, sizeof(value_u8));
+    para->filter_mode = value_u8;
+	
     para->reserved_u8_7  = 0;
 
     para->reserved_u8_8     = 12;
@@ -2144,9 +2138,6 @@ static void convert_para_to_cfg(const GprsParaFileType *para)
     value_u8 = GET_BIT22(para->param_bits);
     config_service_set(CFG_IS_UART_IO_WHEN_SLEEP, TYPE_BOOL, &value_u8, sizeof(value_u8));
 
-    value_u8 = GET_BIT23(para->param_bits);
-    config_service_set(CFG_SMOOTH_TRACK, TYPE_BOOL, &value_u8, sizeof(value_u8));
-
     value_u8 = GET_BIT24(para->param_bits);
     config_service_set(CFG_BATTUPLOAD_DISABLE, TYPE_BYTE, &value_u8, sizeof(value_u8));
 
@@ -2171,6 +2162,9 @@ static void convert_para_to_cfg(const GprsParaFileType *para)
     config_service_set(CFG_USER3_NUMBER, TYPE_STRING, para->user_number_3, GM_strlen((char *)para->user_number_3));
     config_service_set(CFG_USER4_NUMBER, TYPE_STRING, para->user_number_4, GM_strlen((char *)para->user_number_4));
 
+
+    value_u8 = para->filter_mode;
+    config_service_set(CFG_SMOOTH_TRACK, TYPE_BYTE, &value_u8, sizeof(value_u8));
 
     value_u16 = para->power_alarm_check_tim;
     config_service_set(CFG_POWER_CHECK_TIME, TYPE_SHORT, &value_u16, sizeof(value_u16));

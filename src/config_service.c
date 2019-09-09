@@ -134,6 +134,7 @@ static const ConfigDeviceTypeStruct s_config_device[DEVICE_MAX] =
     {"GS05I",                                       DEVICE_GS05I},
     {"GS05H",                                       DEVICE_GS05H},
     {"GM06E",                                       DEVICE_GM06E},
+    {"GS10",										DEVICE_GS10},
 };
 
 static GM_ERRCODE config_service_transfer_status(u8 new_status);
@@ -1345,7 +1346,7 @@ static void config_msg_param_set(u16 index, u8 *pMsg, u8 len)
             break;
 		
 		case CFG_SMOOTH_TRACK:
-			config_service_set((ConfigParamEnum)index, TYPE_BOOL, pMsg, sizeof(u8));
+			config_service_set_byte((ConfigParamEnum)index, &pMsg[3], sizeof(U32));
 			break;
 		
 		case CFG_BATTUPLOAD_DISABLE:

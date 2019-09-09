@@ -26,4 +26,4 @@ LINK           =  $(DIR_TOOL)\armlink.exe          # Linker
 ASM            =  $(DIR_TOOL)\armasm.exe           # ARM assembler
 AR             =  $(DIR_TOOL)\armar.exe            # Library tool
 BIN_TOOL       =  $(DIR_TOOL)\fromelf.exe          # Binary tool
-MAKE		   = make.exe
+MAKE		   =  make.exe

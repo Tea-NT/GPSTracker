@@ -30,4 +30,7 @@ LIB_SRCS_C   = 	main.c  \
 		protocol_jt808.c \
 		command.c \
 		auto_test.c\
+		matrix.c\
+		kalman.c\
+		gps_kalman_filter.c\
 		
