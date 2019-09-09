@@ -445,8 +445,8 @@ typedef enum
     DEVICE_GS05F, //2线单sensor 电池90V
     DEVICE_GS05I, //2线双sensor 无电池
     DEVICE_GS05H, //4线双sensor
-    DEVICE_GM06E,//同GS03A,客户定制
-
+    DEVICE_GM06E, //同GS03A,客户定制
+    DEVICE_GS10,  //BMS管理
     DEVICE_MAX,
 }ConfigDeviceTypeEnum;
 
