@@ -90,6 +90,8 @@ void app_main_entry(void)
 	config_service_read_from_local();
     config_service_save_to_local();
 
+	config_service_set_test_mode(false);
+
 	gsm_create();
     //其中创建网络服务
 	gprs_create();

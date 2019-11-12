@@ -674,6 +674,11 @@ void log_service_upload(LogLevel level,JsonObject* p_root)
     ST_Time t = {0};
     char date[50] = {0};
 	char log_str[GM_LOG_MAX_LEN] = {0};
+
+	if (false == s_log_enable)
+	{
+		return;
+	}
 	
     zone = config_service_get_zone();
     util_get_current_local_time(NULL, &t, zone);

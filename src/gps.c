@@ -177,6 +177,8 @@ typedef struct
 	U32 constant_speed_time;
 	U32 static_speed_time;
 	StateRecord over_speed_alarm_state;
+	
+    u8 gps_recovery_flg;
 }Gps,*PGps;
 
 static Gps s_gps;
@@ -357,6 +359,7 @@ GM_ERRCODE gps_power_on(bool push_data_enbale)
 	s_gps.state = GM_GPS_FIX_NONE;
 	led_set_gps_state(GM_LED_FLASH);
 	s_gps.power_on_time = util_clock();
+    s_gps.gps_recovery_flg = 0;
 	
 	s_gps.gpsdev_type = config_service_get_gps_type();
 
@@ -447,7 +450,7 @@ static void check_fix_state(void)
 	char snr_str[128] = {0};
 	if (s_gps.state < GM_GPS_FIX_3D)
 	{
-		if (false == system_state_has_reported_lbs_since_boot())
+		if (false == system_state_has_reported_lbs_since_boot() && false == system_state_has_reported_gps_since_boot())
 		{
 			gps_service_push_lbs();
 			system_state_set_has_reported_lbs_since_boot(true);
@@ -645,6 +648,7 @@ GM_ERRCODE gps_power_off(void)
 	uart_close_port(GM_UART_DEBUG);
 	hard_ware_close_gps();
 	hard_ware_sleep();
+	GM_SysMsdelay(1000);
 	s_gps.sleep_time = util_clock();
 	gps_kalman_filter_destroy();
 	return GM_SUCCESS;
@@ -749,30 +753,7 @@ static void check_has_received_data(void)
 {
     //如果串口还没收到数据
 	if (s_gps.internal_state <= GM_GPS_STATE_WAIT_VERSION)
-	{
-        JsonObject* p_log = json_create();
-        json_add_string(p_log, "event", "Open GPS failed!");
-        json_add_int(p_log, "power_on_time", s_gps.power_on_time);
-        json_add_int(p_log, "last_rcv_time", s_gps.last_rcv_time);
-        log_service_upload(ERROR, p_log);
-        
-		hard_ware_close_gps();
-		uart_close_port(GM_UART_GPS);
-		GM_SysMsdelay(100);
-
-		//如果型号未知，更换波特率
-		if(GM_GPS_TYPE_UNKNOWN == s_gps.gpsdev_type)
-		{
-			if (BAUD_RATE_HIGH == s_gps.baud_rate)
-			{
-				s_gps.baud_rate = BAUD_RATE_LOW;
-			}
-			else
-			{
-				s_gps.baud_rate = BAUD_RATE_HIGH;
-			}
-		}
-
+	{        
 		//连续10分钟未收到数据重启,否则重新打开GPS和串口继续检查是否收到数据
 		if((util_clock() - s_gps.last_rcv_time) >= 10*SECONDS_PER_MIN && (util_clock() - s_gps.power_on_time) > 10*SECONDS_PER_MIN)
 		{
@@ -781,7 +762,25 @@ static void check_has_received_data(void)
 		}
 		else
 		{
-			GM_ERRCODE ret = uart_open_port(GM_UART_GPS, s_gps.baud_rate, GM_REOPEN_GPS_PORT_TIME);
+			GM_ERRCODE ret = GM_SUCCESS;
+			hard_ware_close_gps();
+			uart_close_port(GM_UART_GPS);
+			GM_SysMsdelay(100);
+
+			//如果型号未知，更换波特率
+			if(GM_GPS_TYPE_UNKNOWN == s_gps.gpsdev_type)
+			{
+				if (BAUD_RATE_HIGH == s_gps.baud_rate)
+				{
+					s_gps.baud_rate = BAUD_RATE_LOW;
+				}
+				else
+				{
+					s_gps.baud_rate = BAUD_RATE_HIGH;
+				}
+			}
+			
+			ret = uart_open_port(GM_UART_GPS, s_gps.baud_rate, GM_REOPEN_GPS_PORT_TIME);
 			if(GM_SUCCESS != ret)
 			{
 				LOG(FATAL,"Failed to open GPS uart,ret=%d", ret);
@@ -921,8 +920,24 @@ void gps_on_rcv_uart_data(char* p_data, const U16 len)
 			{
 				if(MTK_TIME_ACK == mtk_ack.ack_type)
 				{
-					write_mtk_epo_pos();
-					LOG(INFO,"Received MTK_TIME_ACK");
+					if(mtk_ack.ack_result == MTK_ACTION_SUCCEED)
+                    {
+                        write_mtk_epo_pos();
+					    LOG(INFO,"Received MTK_TIME_ACK");
+                    }
+					else
+					{
+                        LOG(INFO,"Received MTK_TIME_ACK Fail!!");
+                        if(!s_gps.gps_recovery_flg)
+                        {
+                            gps_write_mtk_cmd("PMTK104");
+                            s_gps.gps_recovery_flg = 1;
+                        }
+                        else
+                        {
+                            write_mtk_epo_pos();
+                        }
+                    }
 				}
 				else if(MTK_POS_ACK == mtk_ack.ack_type)
 				{
@@ -967,7 +982,7 @@ void gps_on_rcv_uart_data(char* p_data, const U16 len)
     		if(nmea_parse_mtk_start(&frame, p_data) && frame.system_message_type == 2)
 			{
 				s_gps.mtk_start_time = util_clock();
-				if (s_gps.internal_state < GM_GPS_STATE_WAIT_APGS_TIME)
+				//if (s_gps.internal_state < GM_GPS_STATE_WAIT_APGS_TIME)
 				{
 					write_mtk_config();
 					set_device_type(GM_GPS_TYPE_MTK_EPO);
@@ -1363,7 +1378,7 @@ static void on_received_gga(const NMEASentenceGGA gga)
 	s_gps.hdop = nmea_tofloat(&gga.hdop);
 	
 	check_fix_state_change();
-	LOG(DEBUG, "fix_state=%d,tracked=%d,hdop=%f", s_gps.state,s_gps.satellites_tracked,s_gps.hdop);
+	LOG(DEBUG, "fix_state=%d,tracked=%d,hdop=%f,altitude=%f", s_gps.state,s_gps.satellites_tracked,s_gps.hdop,s_gps.altitude);
 }
 
 static void on_received_gsa(const NMEASentenceGSA gsa)
@@ -1603,6 +1618,7 @@ static void on_received_rmc(const NMEASentenceRMC rmc)
 		gps_data.satellites = s_gps.satellites_tracked;
 		gps_data.precision = s_gps.hdop;
 		gps_data.signal_intensity_grade = s_gps.signal_intensity_grade;
+		gps_data.alt = s_gps.altitude;
 
 		//检查异常数据
 		if (0 == gps_data.gps_time || false == rmc.valid)

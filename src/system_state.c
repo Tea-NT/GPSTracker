@@ -133,7 +133,7 @@ typedef struct
 	//外部电池电压等级
 	U8 extern_battery_voltage_grade;
 
-	//历程（单位:米）
+	//里程（单位:米）
 	U64 mileage;
 
 	//当前可执行文件的校验合
@@ -155,16 +155,15 @@ typedef struct
 
 static SystemState s_system_state;
 
-static void init_para(void);
+static void init_para(bool all);
 
 static GM_ERRCODE read_state_from_file(void); 
 
-static GM_ERRCODE save_state_to_file(void); 
 
 GM_ERRCODE system_state_create(void)
 {
 	GM_ERRCODE ret = GM_SUCCESS;
-	init_para();
+	init_para(false);
 	ret = read_state_from_file();
 	return ret;
 }
@@ -181,11 +180,80 @@ void system_state_get_last_gps(GPSData *p_gps)
     LOG(DEBUG,"clock(%d) system_state_get_last_gps %f,%f.", util_clock(), p_gps->lng,p_gps->lat);
 }
 
-
-
-static void init_para(void)
+void system_state_set_public_default_ip(void)
 {
-    char *addr = NULL;
+    char *addr = config_service_get_pointer(CFG_SERVERADDR);
+	
+	GM_memset(s_system_state.ip_cache, 0, sizeof(s_system_state.ip_cache));
+	
+	//主服务器默认IP
+    if (GM_strstr(addr, GOOME_GPSOO_DNS) > 0)
+    {
+        GM_ConvertIpAddr(CONFIG_GOOCAR_SERVER_IP,s_system_state.ip_cache[SOCKET_INDEX_MAIN]);
+    }
+    else if (GM_strstr(addr, GOOME_LITEDEV_DNS) > 0)
+    {
+        GM_ConvertIpAddr(CONFIG_LITE_SERVER_IP,s_system_state.ip_cache[SOCKET_INDEX_MAIN]);
+    }
+	else
+	{
+		//第三方平台，没有默认IP
+	}
+	
+	//AGPS服务器默认IP
+    GM_ConvertIpAddr(CONFIG_AGPS_SERVER_IP,s_system_state.ip_cache[SOCKET_INDEX_AGPS]);
+
+	//日志服务器默认IP
+    GM_ConvertIpAddr(CONFIG_LOG_SERVER_IP,s_system_state.ip_cache[SOCKET_INDEX_LOG]);
+
+    //升级服务器默认IP
+    GM_ConvertIpAddr(GOOME_UPDATE_SERVER_IP,s_system_state.ip_cache[SOCKET_INDEX_UPDATE]);
+
+	//配置服务器默认IP
+    GM_ConvertIpAddr(CONFIG_SERVER_IP,s_system_state.ip_cache[SOCKET_INDEX_CONFIG]);
+
+	system_state_save_state_to_file();
+}
+
+
+void system_state_set_internal_default_ip(void)
+{
+ 	char *addr = config_service_get_pointer(CFG_SERVERADDR);
+	
+	GM_memset(s_system_state.ip_cache, 0, sizeof(s_system_state.ip_cache));
+	
+	//主服务器默认IP
+    if (GM_strstr(addr, GOOME_GPSOO_DNS) > 0)
+    {
+        GM_ConvertIpAddr(GOOME_MAIN_INTERNAL_IP,s_system_state.ip_cache[SOCKET_INDEX_MAIN]);
+    }
+    else if (GM_strstr(addr, GOOME_LITEDEV_DNS) > 0)
+    {
+        GM_ConvertIpAddr(GOOME_MAIN_INTERNAL_IP,s_system_state.ip_cache[SOCKET_INDEX_MAIN]);
+    }
+	else
+	{
+		//第三方平台，没有默认IP
+	}
+	
+	//AGPS服务器默认IP
+    GM_ConvertIpAddr(GOOME_MAIN_INTERNAL_IP,s_system_state.ip_cache[SOCKET_INDEX_AGPS]);
+
+	//日志服务器默认IP
+    GM_ConvertIpAddr(GOOME_OTHER_INTERNAL_IP,s_system_state.ip_cache[SOCKET_INDEX_LOG]);
+
+    //升级服务器默认IP
+    GM_ConvertIpAddr(GOOME_OTHER_INTERNAL_IP,s_system_state.ip_cache[SOCKET_INDEX_UPDATE]);
+
+	//配置服务器默认IP
+    GM_ConvertIpAddr(GOOME_OTHER_INTERNAL_IP,s_system_state.ip_cache[SOCKET_INDEX_CONFIG]);
+
+	system_state_save_state_to_file();
+}
+
+
+static void init_para(bool all)
+{
 	s_system_state.magic = SYSTEM_STATE_MAGIC_NUMBER;
 	s_system_state.status_bits = 0;
 	s_system_state.boot_reason = GM_RREBOOT_UNKNOWN;
@@ -212,24 +280,11 @@ static void init_para(void)
 	s_system_state.gpss_reboot_reason[0] = 0;
 
     GM_memset(&s_system_state.latest_gps, 0, sizeof(s_system_state.latest_gps));
-	GM_memset(s_system_state.ip_cache, 0, sizeof(s_system_state.ip_cache));
 
-    
-    addr = config_service_get_pointer(CFG_SERVERADDR);
-    if (GM_strstr(addr, GOOME_GPSOO_DNS) > 0)
-    {
-        GM_ConvertIpAddr(CONFIG_GOOCAR_SERVER_IP,s_system_state.ip_cache[SOCKET_INDEX_MAIN]);
-    }
-
-    if (GM_strstr(addr, GOOME_LITEDEV_DNS) > 0)
-    {
-         GM_ConvertIpAddr(CONFIG_LITE_SERVER_IP,s_system_state.ip_cache[SOCKET_INDEX_MAIN]);
-    }
-
-    GM_ConvertIpAddr(CONFIG_AGPS_SERVER_IP,s_system_state.ip_cache[SOCKET_INDEX_AGPS]);
-    GM_ConvertIpAddr(CONFIG_LOG_SERVER_IP,s_system_state.ip_cache[SOCKET_INDEX_LOG]);
-    GM_ConvertIpAddr(GOOME_UPDATE_SERVER_IP,s_system_state.ip_cache[SOCKET_INDEX_UPDATE]);
-    GM_ConvertIpAddr(CONFIG_SERVER_IP,s_system_state.ip_cache[SOCKET_INDEX_CONFIG]);
+	if(true == all)
+	{
+		system_state_set_public_default_ip();
+	}
 
 }
 
@@ -238,11 +293,11 @@ GM_ERRCODE system_state_destroy(void)
 	return GM_SUCCESS;
 }
 
-GM_ERRCODE system_state_reset(void)
+GM_ERRCODE system_state_reset(bool all)
 {
-	init_para();
+	init_para(all);
 	LOG(INFO,"system_state_reset");
-	return save_state_to_file();
+	return system_state_save_state_to_file();
 }
 
 GM_ERRCODE system_state_clear_reboot_count(void)
@@ -257,7 +312,7 @@ GM_ERRCODE system_state_clear_reboot_count(void)
 	s_system_state.reboot_for_other_counts = 0;
 	s_system_state.reboot_for_checkpara_counts = 0;
 	LOG(INFO,"system_state_reset");
-	return save_state_to_file();
+	return system_state_save_state_to_file();
 }
 
 
@@ -336,8 +391,8 @@ BootReason system_state_get_boot_reason(bool add_counts)
 			break;
 		}
 		
-		LOG(INFO,"system_state_get_boot_reason");
-		save_state_to_file();
+		LOG(INFO,"system_state_get_boot_reason:%d",s_system_state.boot_reason);
+		system_state_save_state_to_file();
 	}
 	
 	return s_system_state.boot_reason;
@@ -378,8 +433,8 @@ GM_ERRCODE system_state_set_boot_reason(const BootReason boot_reason)
 	}
 	
 	s_system_state.boot_reason = boot_reason; 
-	LOG(INFO,"system_state_set_boot_reason");
-	return save_state_to_file();
+	LOG(INFO,"system_state_set_boot_reason:%d",boot_reason);
+	return system_state_save_state_to_file();
 }
 
 U32 system_state_get_reboot_counts(const BootReason boot_reason)
@@ -444,7 +499,7 @@ GM_ERRCODE system_state_set_work_state(const SystemWorkState work_state)
 		LOG(INFO,"system_state_set_work_state:%d",work_state);
 		//状态发生变化，触发一次心跳
 		gps_service_heart_atonce();
-		return save_state_to_file();
+		return system_state_save_state_to_file();
 	}
 	return GM_SUCCESS;
 }
@@ -455,7 +510,7 @@ GM_ERRCODE system_state_set_vehicle_state(const VehicleState vehicle_state)
 	{
 		LOG(INFO, "vehicle_state from %d to %d", s_system_state.vehicle_state,vehicle_state);
 		s_system_state.vehicle_state = vehicle_state;
-		return save_state_to_file();
+		return system_state_save_state_to_file();
 	}
 	return GM_SUCCESS;
 }
@@ -484,7 +539,7 @@ static GM_ERRCODE read_state_from_file()
     if (ret < 0 || file_len != sizeof(s_system_state))
     {
         LOG(ERROR,"Failed to read system state file[%d]", ret);
-		init_para();
+		init_para(true);
         GM_FS_Close(file_handle);
         return GM_SYSTEM_ERROR;
     }
@@ -494,8 +549,8 @@ static GM_ERRCODE read_state_from_file()
     if (s_system_state.magic != SYSTEM_STATE_MAGIC_NUMBER)
     {
         LOG(ERROR,"magic error:%x", s_system_state.magic);
-		init_para();
-		return save_state_to_file();
+		init_para(true);
+		return system_state_save_state_to_file();
     }
 
     crc = applied_math_calc_common_crc16((u8*)&s_system_state.status_bits, (sizeof(s_system_state) - 8));
@@ -503,13 +558,13 @@ static GM_ERRCODE read_state_from_file()
     {
     	LOG(ERROR,"crc error:%X,%X", s_system_state.crc,crc);
 		LOG_HEX((char*)&s_system_state, sizeof(s_system_state));
-		init_para();
-		return save_state_to_file();
+		init_para(true);
+		return system_state_save_state_to_file();
     }
 	return GM_SUCCESS;
 }
 
-static GM_ERRCODE save_state_to_file(void)
+GM_ERRCODE system_state_save_state_to_file(void)
 {
 	U32 file_len = 0;
     S32 file_handle = -1;
@@ -571,7 +626,7 @@ GM_ERRCODE system_state_set_has_reported_gps_since_boot(bool state)
 		CLR_BIT1(s_system_state.status_bits);
 	}
 	LOG(INFO,"system_state_set_has_reported_gps_since_boot");
-	return save_state_to_file();
+	return system_state_save_state_to_file();
 }
 
 bool system_state_has_reported_static_gps(void)
@@ -595,7 +650,7 @@ GM_ERRCODE system_state_set_has_reported_static_gps(bool state)
 		CLR_BIT2(s_system_state.status_bits);
 	}
 	LOG(INFO,"system_state_set_has_reported_static_gps");
-	return save_state_to_file();
+	return system_state_save_state_to_file();
 }
 
 bool system_state_has_reported_gps_since_modify_ip(void)
@@ -619,7 +674,7 @@ GM_ERRCODE system_state_set_reported_gps_since_modify_ip(bool state)
 		CLR_BIT3(s_system_state.status_bits);
 	}
 	LOG(INFO,"system_state_set_reported_gps_since_modify_ip");
-	return save_state_to_file();
+	return system_state_save_state_to_file();
 }
 
 
@@ -674,7 +729,7 @@ GM_ERRCODE system_state_set_acc_is_line_mode(bool state)
 		LOG(INFO,"ACC line is invalid!");
 	}
 	LOG(INFO,"system_state_set_acc_is_line_mode");
-	return save_state_to_file();
+	return system_state_save_state_to_file();
 }
 
 bool system_state_get_device_relay_state(void)
@@ -698,7 +753,7 @@ GM_ERRCODE system_state_set_device_relay_state(bool state)
 		CLR_BIT6(s_system_state.status_bits);
 	}
 	LOG(INFO,"system_state_set_device_relay_state");
-	return save_state_to_file();
+	return system_state_save_state_to_file();
 }
 
 bool system_state_get_user_relay_state(void)
@@ -724,7 +779,7 @@ GM_ERRCODE system_state_set_user_relay_state(bool state)
 		CLR_BIT7(s_system_state.status_bits);
 	}
 	LOG(INFO,"system_state_set_user_relay_state");
-	return save_state_to_file();
+	return system_state_save_state_to_file();
 }
 
 bool system_state_get_defence(void)
@@ -747,7 +802,7 @@ GM_ERRCODE system_state_set_defence(bool state)
 		CLR_BIT8(s_system_state.status_bits);
 	}
 	LOG(INFO,"system_state_set_defence");
-	return save_state_to_file();
+	return system_state_save_state_to_file();
 }
 
 bool system_state_has_reported_lbs_since_boot(void)
@@ -771,7 +826,7 @@ GM_ERRCODE system_state_set_has_reported_lbs_since_boot(bool state)
 		CLR_BIT9(s_system_state.status_bits);
 	}
 	LOG(INFO,"system_state_set_has_reported_lbs_since_boot");
-	return save_state_to_file();
+	return system_state_save_state_to_file();
 }
 
 bool system_state_is_cold_boot(void)
@@ -795,7 +850,7 @@ GM_ERRCODE system_state_set_cold_boot(bool state)
 		CLR_BIT10(s_system_state.status_bits);
 	}
 	LOG(INFO,"system_state_set_cold_boot");
-	return save_state_to_file();
+	return system_state_save_state_to_file();
 }
 
 U8 system_state_get_extern_battery_voltage_grade(void)
@@ -814,7 +869,7 @@ GM_ERRCODE system_state_set_extern_battery_voltage_grade(U8 voltage_grade)
 	{
 		s_system_state.extern_battery_voltage_grade = voltage_grade;
 		LOG(INFO,"system_state_set_extern_battery_voltage_grade");
-		return save_state_to_file();
+		return system_state_save_state_to_file();
 	}
 }
 
@@ -843,7 +898,7 @@ GM_ERRCODE system_state_set_power_off_alarm(bool state)
 		CLR_BIT16(s_system_state.status_bits);
 	}
 	LOG(INFO,"system_state_set_power_off_alarm");
-	return save_state_to_file();
+	return system_state_save_state_to_file();
 }
 
 bool system_state_get_battery_low_voltage_alarm(void)
@@ -871,7 +926,7 @@ GM_ERRCODE system_state_set_battery_low_voltage_alarm(bool state)
 		CLR_BIT17(s_system_state.status_bits);
 	}
 	LOG(INFO,"system_state_set_battery_low_voltage_alarm");
-	return save_state_to_file();
+	return system_state_save_state_to_file();
 }
 
 GM_ERRCODE system_state_set_high_voltage_alarm(bool state)
@@ -893,7 +948,7 @@ GM_ERRCODE system_state_set_high_voltage_alarm(bool state)
 		CLR_BIT19(s_system_state.status_bits);
 	}
 	LOG(INFO,"system_state_set_high_voltage_alarm");
-	return save_state_to_file();
+	return system_state_save_state_to_file();
 }
 
 
@@ -921,7 +976,7 @@ GM_ERRCODE system_state_set_shake_alarm(bool state)
 		CLR_BIT20(s_system_state.status_bits);
 	}
 	LOG(INFO,"system_state_set_shake_alarm");
-	return save_state_to_file();
+	return system_state_save_state_to_file();
 }
 
 bool system_state_get_overspeed_alarm(void)
@@ -948,7 +1003,7 @@ GM_ERRCODE system_state_set_overspeed_alarm(bool state)
 		CLR_BIT21(s_system_state.status_bits);
 	}
 	LOG(INFO,"system_state_set_overspeed_alarm");
-	return save_state_to_file();
+	return system_state_save_state_to_file();
 }
 
 bool system_state_get_fakecell_alarm(void)
@@ -975,7 +1030,7 @@ GM_ERRCODE system_state_set_fakecell_alarm(bool state)
 		CLR_BIT22(s_system_state.status_bits);
 	}
 	LOG(INFO,"system_state_set_fakecell_alarm");
-	return save_state_to_file();
+	return system_state_save_state_to_file();
 }
 
 bool system_state_get_high_voltage_alarm(void)
@@ -1007,7 +1062,7 @@ GM_ERRCODE system_state_set_collision_alarm(bool state)
 		CLR_BIT23(s_system_state.status_bits);
 	}
 	LOG(INFO,"system_state_set_collision_alarm");
-	return save_state_to_file();
+	return system_state_save_state_to_file();
 }
 
 bool system_state_get_speed_up_alarm(void)
@@ -1034,7 +1089,7 @@ GM_ERRCODE system_state_set_speed_up_alarm(bool state)
 		CLR_BIT24(s_system_state.status_bits);
 	}
 	LOG(INFO,"system_state_set_speed_up_alarm");
-	return save_state_to_file();
+	return system_state_save_state_to_file();
 }
 
 bool system_state_get_speed_down_alarm(void)
@@ -1061,7 +1116,7 @@ GM_ERRCODE system_state_set_speed_down_alarm(bool state)
 		CLR_BIT25(s_system_state.status_bits);
 	}
 	LOG(INFO,"system_state_set_speed_down_alarm");
-	return save_state_to_file();
+	return system_state_save_state_to_file();
 }
 
 bool system_state_get_turn_over_alarm(void)
@@ -1088,7 +1143,7 @@ GM_ERRCODE system_state_set_turn_over_alarm(bool state)
 		CLR_BIT26(s_system_state.status_bits);
 	}
 	LOG(INFO,"system_state_set_turn_over_alarm");
-	return save_state_to_file();
+	return system_state_save_state_to_file();
 }
 
 bool system_state_get_sharp_turn_alarm(void)
@@ -1115,7 +1170,7 @@ GM_ERRCODE system_state_set_sharp_turn_alarm(bool state)
 		CLR_BIT27(s_system_state.status_bits);
 	}
 	LOG(INFO,"system_state_set_sharp_turn_alarm");
-	return save_state_to_file();
+	return system_state_save_state_to_file();
 }
 
 
@@ -1143,7 +1198,7 @@ GM_ERRCODE system_state_set_remove_alarm(bool state)
 		CLR_BIT28(s_system_state.status_bits);
 	}
 	LOG(INFO,"system_state_set_remove_alarm");
-	return save_state_to_file();
+	return system_state_save_state_to_file();
 }
 
 
@@ -1171,7 +1226,7 @@ GM_ERRCODE system_state_set_move_alarm(bool state)
 		CLR_BIT29(s_system_state.status_bits);
 	}
 	LOG(INFO,"system_state_set_move_alarm");
-	return save_state_to_file();
+	return system_state_save_state_to_file();
 }
 
 void system_state_set_mileage(U64 mileage)
@@ -1184,7 +1239,7 @@ void system_state_set_mileage(U64 mileage)
 	s_system_state.mileage = mileage;
 	if (util_clock()%(10*SECONDS_PER_MIN) == 0)
 	{
-		save_state_to_file();
+		system_state_save_state_to_file();
 	}
 }
 
@@ -1204,7 +1259,7 @@ void system_state_set_bin_checksum(U32 check_sum)
 	{
 		s_system_state.check_sum = check_sum;
 		LOG(INFO,"system_state_set_bin_checksum");
-		save_state_to_file();
+		system_state_save_state_to_file();
 	}
 }
 
@@ -1224,7 +1279,7 @@ void system_state_set_gsensor_type(GSensorType gsensor_type)
 	{
 		s_system_state.gsensor_type = gsensor_type;
 		LOG(INFO,"system_state_set_gsensor_type");
-		save_state_to_file();
+		system_state_save_state_to_file();
 	}
 }
 
@@ -1257,7 +1312,7 @@ const char *system_state_get_gpss_reboot_reason(void)
 void system_state_set_ip_cache(U8 index,const U8* ip)
 {
 	GM_memcpy(s_system_state.ip_cache[index], ip, 4);
-	save_state_to_file();
+	system_state_save_state_to_file();
 }
 
 void system_state_get_ip_cache(U8 index,U8* ip)

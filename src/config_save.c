@@ -694,7 +694,8 @@ u8 read_param_from_file(void)
     }
     else
     {
-        if(system_state_get_boot_reason(false) == GM_RREBOOT_UNKNOWN)
+    	//上次如果不是未知原因，可能导致下次断电重启检测不到，不进入自检
+        //if(system_state_get_boot_reason(false) == GM_RREBOOT_UNKNOWN)
         {
     	    system_state_set_boot_reason(GM_REBOOT_POWER_ON);
         }
@@ -964,7 +965,7 @@ static void config_service_set_factory_deault(void)
     value_u16 = 20;
 	config_service_set(CFG_TURN_ANGLE, TYPE_SHORT, &value_u16, sizeof(value_u16));
 
-    value_u32 = 60;
+    value_u32 = 40;
     config_service_set(CFG_SHAKE_THRESHOLD, TYPE_INT, &value_u32, sizeof(value_u32));
 
     value_u8 = 2;
@@ -997,7 +998,7 @@ static void config_service_set_factory_deault(void)
 	value_u8 = false;
     config_service_set(CFG_IS_MOVEALARM_ENABLE, TYPE_BOOL, &value_u8, sizeof(value_u8));
 
-	value_u8 = 1;
+	value_u8 = 2;
     config_service_set(CFG_SMOOTH_TRACK, TYPE_BYTE, &value_u8, sizeof(value_u8));
 
 	value_u8 = false;

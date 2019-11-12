@@ -197,6 +197,9 @@ GM_ERRCODE auto_test_create(bool is_self_check)
 		LOG(INFO,"It is not default imei!");
    		return GM_ERROR_STATUS;
    	}
+
+	//确保切换到测试服务器
+	gps_service_change_config();
 	
 	LOG(INFO,"start test,is_self_check=%d",is_self_check);
 	s_auto_test.start = true;
@@ -210,17 +213,23 @@ GM_ERRCODE auto_test_create(bool is_self_check)
 	auto_test_check_chip_rid();
 	
     GM_ReleaseVerno((U8*)s_auto_test.test_result.kernal_version);
+
+	
 	
 	return GM_SUCCESS;
 }
  
 GM_ERRCODE auto_test_destroy(void)
 {
+	u8 ip[4];
+	
 	LOG_TEST("Exit test mode.");
 	s_auto_test.start = false;
 	
 	log_service_enable_print(true);
 	config_service_set_test_mode(false);
+	GM_memset(ip, 0x00, 4);
+	system_state_set_ip_cache(SOCKET_INDEX_MAIN, ip);
 	
 	return GM_SUCCESS;
 }
@@ -443,7 +452,15 @@ static void struct_to_jsonstr(const AutoTestResult result,char* json_str)
 	JsonObject* p_result_root = json_create();
 	
 	json_add_string(p_result_root, "event", "selftest");
-	json_add_string(p_result_root, "chip_rid", result.chip_rid);
+	if (GM_strlen(result.chip_rid) < 10)
+	{
+		auto_test_check_chip_rid();
+		json_add_string(p_result_root, "chip_rid", s_auto_test.test_result.chip_rid);
+	}
+	else
+	{
+		json_add_string(p_result_root, "chip_rid", result.chip_rid);
+	}
 	json_add_string(p_result_root, "imei", (char*)result.imei);
 	json_add_string(p_result_root, "iccid", (char*)result.iccid);
 	
@@ -731,14 +748,19 @@ static void auto_test_check_gps_location(void)
     {	
     	float snr[5] = {0};
 		U8 index = 0;
+		U8 non_zero_num = 0;
 
     	const SNRInfo* snr_info = gps_get_snr_array();
 		for(index = 0;index < 5;index++)
 		{
 			snr[index] = snr_info[index].snr;
-			//LOG_TEST("SNR:%f",snr[index]);
+			if (snr[index] != 0)
+			{
+				non_zero_num++;
+			}
 		}
-		snr_avg  = applied_math_avage(snr,5);
+		//只计算非零SNR平均值，根据gps.c中on_received_gsv函数来看，0值的一定在最后
+		snr_avg  = applied_math_avage(snr,non_zero_num);
 		//LOG_TEST("snr_avg:%f",snr[index]);
 		s_auto_test.test_result.snr_avg = (s_auto_test.test_result.snr_avg * s_auto_test.test_result.snr_counts + snr_avg)/(s_auto_test.test_result.snr_counts + 1);
 		//LOG_TEST("test_result.snr_avg:%f",snr[index]);

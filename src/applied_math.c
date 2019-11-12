@@ -263,7 +263,14 @@ U32 applied_math_calc_epo_crc16(const U8* p_data, U32 len, U32 pre_val)
 
 float applied_math_lowpass_filter(const float last_value, const float new_value, float alpha)
 {
-	return last_value * alpha + new_value * (1 - alpha);
+	if (fabs(last_value) < 0.01)
+	{
+		return new_value;
+	}
+	else
+	{
+		return last_value * alpha + new_value * (1 - alpha);
+	}
 }
 
 float applied_math_avage(const float* p_array,const U16 len)

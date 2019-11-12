@@ -466,8 +466,8 @@ void gps_service_connection_failed(void)
 
 GM_ERRCODE gps_service_create(bool first_create)
 {
-    u8 addr[2*GOOME_DNS_MAX_LENTH+1];
-    u8 IP[4];
+    u8 addr[2*GOOME_DNS_MAX_LENTH+1] = {0};
+    u8 IP[4] = {0};
     u32 port = 0;
     u8 idx = 0;
     GM_ERRCODE ret = GM_SUCCESS;
@@ -500,6 +500,7 @@ GM_ERRCODE gps_service_create(bool first_create)
             LOG(WARN,"clock(%d) gps_service_create assert(idx ==2) failed.", util_clock());
             return GM_PARAM_ERROR;
         }
+		LOG(INFO,"is_default_imei,use test server");
     }
     else
     {
@@ -509,8 +510,10 @@ GM_ERRCODE gps_service_create(bool first_create)
             LOG(WARN,"clock(%d) gps_service_create assert(idx ==2) failed.", util_clock());
             return GM_PARAM_ERROR;
         }
+		LOG(INFO,"is not default imei,use main server");
     }
-    
+
+	//是域名
     if(GM_SUCCESS != GM_ConvertIpAddr(addr, IP))
     {
         if(util_is_valid_dns(addr, GM_strlen((const char *)addr)))
@@ -525,10 +528,14 @@ GM_ERRCODE gps_service_create(bool first_create)
             return GM_PARAM_ERROR;
         }
     }
+	//是IP
     else
     {
         gm_socket_set_ip_port(&s_gps_socket, IP, port, STREAM_TYPE_STREAM);
-        system_state_set_ip_cache(SOCKET_INDEX_MAIN, IP);
+        if (!config_service_is_test_mode())
+        {
+        	system_state_set_ip_cache(SOCKET_INDEX_MAIN, IP);
+        }
     }
 
 
@@ -628,6 +635,14 @@ static void gps_service_data_finish_proc(void)
 
 GM_ERRCODE gps_service_timer_proc(void)
 {
+    // 如果gprs成功, 但socket无法收发数据, 则heart_receive_time 不会更新
+	if(gprs_check_need_reboot(s_gps_socket_extend.heart_receive_time))
+	{
+        // 如果未初始化, 相当于gprs_check_need_reboot(0) 即检测启动了21分钟.
+        gprs_destroy();
+        return GM_ERROR_STATUS;
+	}
+
     if(!s_gps_socket.fifo.base_addr)
     {
         return GM_SUCCESS;
@@ -744,16 +759,37 @@ GM_ERRCODE gps_service_cache_send(u8 *data, u8 len)
 
     if(GM_SUCCESS == gps_service_save_to_cache(data, len))
     {
-        if(GM_SUCCESS == gm_socket_send(&s_gps_socket, data, len))
+        if(config_service_get_app_protocol() == PROTOCOL_JT808)
         {
-            s_gps_socket.send_time = util_clock();
-            return GM_SUCCESS;
+            //转义后带基站的消息可能超过100字节, 所以在此处转义
+            u8 buff[HIS_FILE_FRAME_SIZE*2];
+            u16 buf_len = sizeof(buff);
+            protocol_jt_pack_escape(data, len, buff, &buf_len);
+            if(GM_SUCCESS == gm_socket_send(&s_gps_socket, buff, buf_len))
+            {
+                s_gps_socket.send_time = util_clock();
+                return GM_SUCCESS;
+            }
+            else
+            {
+                system_state_set_gpss_reboot_reason("gm_socket_send cache_send");
+                gps_service_destroy_gprs();
+                return GM_NET_ERROR;
+            }
         }
         else
         {
-            system_state_set_gpss_reboot_reason("gm_socket_send cache_send");
-            gps_service_destroy_gprs();
-            return GM_NET_ERROR;
+            if(GM_SUCCESS == gm_socket_send(&s_gps_socket, data, len))
+            {
+                s_gps_socket.send_time = util_clock();
+                return GM_SUCCESS;
+            }
+            else
+            {
+                system_state_set_gpss_reboot_reason("gm_socket_send cache_send");
+                gps_service_destroy_gprs();
+                return GM_NET_ERROR;
+            }
         }
     }
     return GM_MEM_NOT_ENOUGH;

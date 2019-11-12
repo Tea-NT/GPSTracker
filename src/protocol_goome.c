@@ -226,7 +226,7 @@ static void protocol_goome_pack_extern_power(U8* pdata, u16 *idx, u16 len)
         pdata[(*idx)++] = (u8)percent;
 
         hard_ware_get_power_voltage(&voltage);
-        value_u16 = (u16)voltage*100;
+        value_u16 = (u16)(voltage*100);
         pdata[(*idx)++] = BHIGH_BYTE(value_u16);
         pdata[(*idx)++] = BLOW_BYTE(value_u16);
     }

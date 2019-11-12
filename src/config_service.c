@@ -134,7 +134,6 @@ static const ConfigDeviceTypeStruct s_config_device[DEVICE_MAX] =
     {"GS05I",                                       DEVICE_GS05I},
     {"GS05H",                                       DEVICE_GS05H},
     {"GM06E",                                       DEVICE_GM06E},
-    {"GS10",										DEVICE_GS10},
 };
 
 static GM_ERRCODE config_service_transfer_status(u8 new_status);

@@ -44,6 +44,7 @@ void protocol_jt_pack_gps_msg2(u8 *pdata, u16 *idx, u16 len);
 void protocol_jt_pack_remote_ack(u8 *pdata, u16 *idx, u16 len, u8 *pRet, u16 retlen);
 void protocol_jt_pack_general_ack(u8 *pdata, u16 *idx, u16 len);
 void protocol_jt_pack_param_ack(u8 *pdata, u16 *idx, u16 len);
+void protocol_jt_pack_escape(u8 *src, u16 src_len, u8 *dest, u16 *dest_len);
 
 
 

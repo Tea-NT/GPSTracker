@@ -1280,14 +1280,16 @@ bool nmea_creat_mtk_aid_time_sentence(const ST_Time st_time, U8* p_sentence, U8*
  */
 bool nmea_creat_mtk_aid_pos_sentence(const float ref_lat, const float ref_lng, U8* p_sentence, U8* p_len)
 {
-	U8 max_lenth = 64;
-	char cmd[64] = {0};
+	U8 max_lenth = SENTENCE_MAX_LENGTH;
+	char cmd[SENTENCE_MAX_LENGTH] = {0};
 	if (NULL == p_sentence || NULL == p_len || *p_len < max_lenth)
 	{
 		*p_len = 0;
 		return false;
 	}
-	GM_snprintf(cmd,max_lenth,"PMTK713,%f,%f,0,30000,30000,0,1200,50",ref_lat,ref_lng);
+	//30000-->20474.0 解决首次定位EPO无效问题
+	GM_snprintf(cmd,max_lenth,"PMTK713,%f,%f,81.00000,20474.0,20474.0,0,208.4,68",ref_lat,ref_lng);
+	//GM_snprintf(cmd,max_lenth,"PMTK713,%f,%f,0,30000,30000,0,1200,50",ref_lat,ref_lng);
 	nmea_create_common_mtk_sentence(cmd,p_sentence);
 	*p_len = GM_strlen((char*)p_sentence);
 	return true;

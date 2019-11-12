@@ -212,6 +212,19 @@ u8 util_is_valid_ip(const u8 *ip, u16 len)
     return 1;
 }
 
+bool util_is_internal_ip(const u8 *ip, u16 len)
+{
+	LOG(DEBUG,"IP:%d,%d,%d,%d",ip[0],ip[1],ip[2],ip[3]);
+	if (ip[0] == 10 || (ip[0] == 172 && ip[1] >=16 && ip[1] <=31) || (ip[0] == 192 && ip[1] == 168))
+	{
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+
 
 
 

@@ -42,6 +42,7 @@
 #include "g_sensor.h"
 #include "auto_test.h"
 #include "watch_dog.h"
+#include "led.h"
 
 #pragma diag_suppress 870 
 
@@ -107,6 +108,7 @@ typedef enum
     CMD_RESULT,
     CMD_PMTK,
     CMD_HARD_REBOOT,
+    CMD_SIM,
     
 	CMD_CMD_MAX,
 }CommandID;
@@ -178,6 +180,7 @@ static CommandInfo s_cmd_infos[CMD_CMD_MAX + 1] =
     {"RESULT",CMD_RESULT},
 	{"PMTK",CMD_PMTK},
 	{"HARDREBOOT",CMD_HARD_REBOOT},
+	{"SIM",CMD_SIM}
 };
 
 static CommandID get_cmd_id(const char* cmd_name);
@@ -839,7 +842,7 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 				config_service_restore_factory_config(cmd_id == CMD_FACTORY_ALL);
 				agps_service_delele_file();
                 gps_service_his_file_delete();
-				system_state_reset();
+				system_state_reset(cmd_id == CMD_FACTORY_ALL);
 				if (cmd_id == CMD_FACTORY_ALL)
 				{
 					auto_test_reset();
@@ -1183,8 +1186,14 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 			para_num = command_scan((char*)p_cmd_content, "s", cmd_name);
 			if (para_num == 1)
 			{	
+				//和用g-sensor唤醒GPS一样的流程
 				gps_power_on(true);
 				g_sensor_reset_noshake_time();
+				system_state_set_work_state(GM_SYSTEM_STATE_WORK);
+				led_set_gsm_state(GM_LED_FLASH);
+				
+				GM_StartTimer(GM_TIMER_10MS_MAIN, TIM_GEN_10MS, timer_10ms_proc);
+				GM_StartTimer(GM_TIMER_1S_MAIN, TIM_GEN_1SECOND, timer_1s_proc);
 			}
 			else
 			{
@@ -1602,7 +1611,7 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 			}
 			else if(para_num == 2)
 			{
-				if (heart_protocol <= 1)
+				if (heart_protocol <= 2)
 				{
 					config_service_set(CFG_HBPROTOCOL, TYPE_BYTE, &heart_protocol, sizeof(heart_protocol));
 					if(GM_SUCCESS != config_service_save_to_local())
@@ -2601,6 +2610,33 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 		{
 			watch_dog_hard_reboot();
 			GM_memcpy(p_rsp, set_success_rsp(from), CMD_MAX_LEN);
+		}
+		break;
+		
+		case CMD_SIM:
+		{
+			u8 is_internal_sim = 0;
+			para_num = command_scan((char*)p_cmd_content, "s;w", cmd_name,&is_internal_sim);
+			if(para_num == 2)
+			{
+				//设置默认IP
+				if(is_internal_sim)
+				{
+					system_state_set_internal_default_ip();
+					
+				}
+				else
+				{
+					system_state_set_public_default_ip();
+				}
+				
+				GM_memcpy(p_rsp, set_success_rsp(from), CMD_MAX_LEN);
+				system_state_save_state_to_file();
+			}
+			else
+			{
+				GM_memcpy(p_rsp, set_fail_rsp(from), CMD_MAX_LEN);
+			}
 		}
 		break;
 		

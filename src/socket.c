@@ -271,6 +271,7 @@ static void current_get_host_start(SocketType *socket)
 
 void socket_get_host_by_name_callback(void *msg)
 {
+	U8 cache_ip[4] = {0};
     if(current_get_host.socket == NULL)
     {
         LOG(ERROR,"clock(%d) socket_get_host_by_name_callback assert(current_get_host.socket != NULL) failed.", 
@@ -295,8 +296,17 @@ void socket_get_host_by_name_callback(void *msg)
         return;
     }
 
+	system_state_get_ip_cache(current_get_host.socket->access_id, cache_ip);
+	
     system_state_set_ip_cache(current_get_host.socket->access_id, (const U8*)msg);
+	
     current_get_host.status = CURRENT_GET_HOST_SUCCESS;
+
+	if(util_is_internal_ip(cache_ip, sizeof(cache_ip)) ^ util_is_internal_ip(msg, sizeof(msg)))
+	{
+		gm_socket_close_for_reconnect(current_get_host.socket);
+		LOG(INFO,"Reconnect the socket because of IP changes.");
+	}
 
 	LOG(INFO,"clock(%d) socket_get_host_by_name_callback (%s)(%d.%d.%d.%d).", 
 		util_clock(), current_get_host.socket->addr, ((const U8*)msg)[0], 

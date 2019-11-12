@@ -81,12 +81,12 @@ GM_ERRCODE system_state_destroy(void);
 /**
  * Function:   重置system_state数据
  * Description:
- * Input:	   无
+ * Input:	   all:是否清除缓存IP
  * Output:	   无
  * Return:	   GM_SUCCESS——成功；其它错误码——失败
  * Others:	   
  */
-GM_ERRCODE system_state_reset(void);
+GM_ERRCODE system_state_reset(bool all);
 
 /**
  * Function:   清除重启次数
@@ -409,6 +409,14 @@ const char *system_state_get_gpss_reboot_reason(void);
 
 void system_state_set_ip_cache(U8 index,const U8* ip);
 void system_state_get_ip_cache(U8 index,U8* ip);
+
+void system_state_set_public_default_ip(void);
+
+void system_state_set_internal_default_ip(void);
+
+GM_ERRCODE system_state_save_state_to_file(void); 
+
+
 
 
 #endif

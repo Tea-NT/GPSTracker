@@ -586,7 +586,10 @@ static void check_awake_sleep(void)
 	}
 
 	//sleep_time_minute_threshold为0不休眠
-	if (s_gsensor.no_shake_time_ms >= sleep_time_minute_threshold * SECONDS_PER_MIN * MSEC_PER_SECONDS && 0 != sleep_time_minute_threshold)
+	//一直匀速运动不休眠
+	if (s_gsensor.no_shake_time_ms >= sleep_time_minute_threshold * SECONDS_PER_MIN * MSEC_PER_SECONDS 
+		&& 0 != sleep_time_minute_threshold
+		&& gps_get_constant_speed_time() < MIN_CRUISE_SPEED_TIME)
 	{
 		if(GM_SYSTEM_STATE_WORK == system_state_get_work_state())
 		{

@@ -297,6 +297,15 @@ u8 util_is_valid_dns(const u8 *pdns, u16 len);
  */
 u8 util_is_valid_ip(const u8 *ip, u16 len);
 
+/**
+ * Function:   
+ * Description:check whether ip is internal IP
+ * Input:	   ip    len
+ * Output:	   无
+ * Return:	   internal IP return true, else retun false
+ * Others:	   无
+ */
+bool util_is_internal_ip(const u8 *ip, u16 len);
 
 /**
  * Function:   

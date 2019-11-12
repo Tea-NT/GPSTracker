@@ -30,7 +30,7 @@
 #include "gps.h"
 
 //发布版修改这个数字
-#define VERSION_NUMBER  "2.0.85"
+#define VERSION_NUMBER  "2.0.93"
 
 
 #define APN_DEFAULT "CMNET"
@@ -53,6 +53,12 @@
 #define CONFIG_LOG_SERVER_IP           "47.106.251.151"
 #define GOOME_UPDATE_SERVER_DNS        "firmware.gpsorg.net:39999"
 #define GOOME_UPDATE_SERVER_IP         "47.106.251.151"
+
+//主服务器内网IP，包括汽车在线接入和万物在线接入，还包括AGPS服务
+#define GOOME_MAIN_INTERNAL_IP "10.28.3.77"
+//其它服务器内网IP，包括配置、升级、日志、测试服务器等
+#define GOOME_OTHER_INTERNAL_IP "10.28.4.232"
+
 
 #define CONFIG_CMD_MAX_LEN         10
 #define CONFIG_STRING_MAX_LEN      100
@@ -349,6 +355,9 @@ typedef enum
     //当前是否测试模式
     CFG_IS_TEST_MODE,
 
+	//是定向卡吗？
+	CFG_IS_VPN_CARD,
+
     CFG_PARAM_MAX
 }ConfigParamEnum;
 
@@ -447,6 +456,7 @@ typedef enum
     DEVICE_GS05H, //4线双sensor
     DEVICE_GM06E, //同GS03A,客户定制
     DEVICE_GS10,  //BMS管理
+
     DEVICE_MAX,
 }ConfigDeviceTypeEnum;
 

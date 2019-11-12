@@ -730,7 +730,7 @@ static U8 hard_ware_calc_extern_voltage_grade(float voltage)
 	{
 		if (voltage > voltage_grade_standard[index] + 6 && voltage <= voltage_grade_standard[index + 1] + 6)
 		{
-			return voltage_grade_standard[array_size -1];
+			return voltage_grade_standard[index + 1];
 		}
 	}
 	return 0;

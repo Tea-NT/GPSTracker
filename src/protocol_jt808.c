@@ -87,7 +87,6 @@ typedef struct
 
 static Jt08MsgSave s_jt_msg_save = {0, 0, };
 
-static void protocol_jt_pack_escape(u8 *src, u16 src_len, u8 *dest, u16 *dest_len);
 static GM_ERRCODE protocol_jt_pack_unescape(u8 *src, u16 *src_len);
 static void protocol_jt_pack_head(u8 *pdata, u16 *idx, u16 len, u16 total, u16 part_num );
 static void protocol_jt_pack_id_len(u8 *pdata, u16 *idx, u16 cmd, u16 len, u8 sec, bool depart);
@@ -137,7 +136,7 @@ static u32 get_value_by_length(u8 *p,u8 l)
 }
 
 
-static void protocol_jt_pack_escape(u8 *src, u16 src_len, u8 *dest, u16 *dest_len)
+void protocol_jt_pack_escape(u8 *src, u16 src_len, u8 *dest, u16 *dest_len)
 {
     u16 i = 0, j = 0;
 
@@ -849,6 +848,7 @@ static void protocol_jt_pack_alarm_status(u8 *pdata, u16 *idx, u16 len, u16 *ret
     *return_len = 4;
 }
 
+//转义后带基站的消息可能超过100字节, 所以不在此处转义
 void protocol_jt_pack_gps_msg(GpsDataModeEnum mode, const GPSData *gps, u8 *pdata, u16 *idx, u16 len)
 {
     u8 *send;
@@ -858,7 +858,7 @@ void protocol_jt_pack_gps_msg(GpsDataModeEnum mode, const GPSData *gps, u8 *pdat
     GPSData tmp_gps;
 	u8 app_ver;
 
-	send = (u8 *) GM_MemoryAlloc(len);
+	send = pdata;
 	if (send == NULL)
 	{
         LOG(INFO,"clock(%d) protocol_jt_pack_gps_msg assert(GM_MemoryAlloc(%d)) failed.", util_clock(), len);
@@ -905,10 +905,8 @@ void protocol_jt_pack_gps_msg(GpsDataModeEnum mode, const GPSData *gps, u8 *pdat
         return;
     }
     protocol_jt_pack_id_len(send, &send_len, JT_CMD_LOCATE, content_all, 0, false);  // 2bytes
-    *idx = len;
-    protocol_jt_pack_escape(send, send_len, pdata, idx);
+    *idx = send_len;
     
-    GM_MemoryFree(send);
     return;
 }
 
@@ -971,7 +969,7 @@ void protocol_jt_pack_lbs_msg(u8 *pdata, u16 *idx, u16 len)
     GPSData gps;
 	u8 app_ver;
 
-	send = (u8 *) GM_MemoryAlloc(len);
+	send = pdata;
 	if (send == NULL)
 	{
         LOG(INFO,"clock(%d) protocol_jt_pack_lbs_msg assert(GM_MemoryAlloc(%d)) failed.", util_clock(), len);
@@ -1038,10 +1036,8 @@ void protocol_jt_pack_lbs_msg(u8 *pdata, u16 *idx, u16 len)
         return;
     }
     protocol_jt_pack_id_len(send, &send_len, JT_CMD_LOCATE, content_all, 0, false);  // 2bytes
-    *idx = len;
-    protocol_jt_pack_escape(send, send_len, pdata, idx);  
+    *idx = send_len;
 
-    GM_MemoryFree(send);
     return;
 }
 
