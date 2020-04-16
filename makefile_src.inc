@@ -26,6 +26,7 @@ LIB_SRCS_C   = 	main.c  \
 		update_file.c \
 		update_service.c \
 		protocol.c \
+		protocol_concox.c \
 		protocol_goome.c \
 		protocol_jt808.c \
 		command.c \
@@ -33,4 +34,8 @@ LIB_SRCS_C   = 	main.c  \
 		matrix.c\
 		kalman.c\
 		gps_kalman_filter.c\
+		wifi.c \
+		recorder.c \
+		call.c \
+		at_command.c\
 		

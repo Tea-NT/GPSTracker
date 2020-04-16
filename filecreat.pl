@@ -104,23 +104,28 @@ open(VERNO,"<".$cfile) or die $cfile."无法打开",$!;
 
 my @l2_split;
 
+printf "\r\n\version $ARGV[0]\r\n";
+$version = $ARGV[0];		
+$upd_version = $ARGV[0];
+$getverflg = 1;
+
 foreach $line (@lines)
 {
 	@l_split = split(" ",$line);
 	
-	if($l_split[1] eq $mark)
-	{
-		@l2_split = split("\"",$l_split[2]);
+	#if($l_split[1] eq $mark)
+	#{
+		#@l2_split = split("\"",$l_split[2]);
 		
-		printf "\r\n\version $l2_split[1]\r\n";
+		#printf "\r\n\version $l2_split[1]\r\n";
 			
-		$version = $l2_split[1];
+		#$version = $l2_split[1];
 		
-		$upd_version = $l2_split[1];
+		#$upd_version = $l2_split[1];
 			
-		$getverflg = 1;
+		#$getverflg = 1;
 
-	}
+	#}
 	
     if($l_split[1] eq $mark_oem_code)
 	{

@@ -35,6 +35,16 @@ export APP_BUILD_TIME
 
 GM_DEF += -DSW_APP_BUILD_DATE_TIME="\"$(APP_BUILD_TIME)"\"
 
+export APP_VERSION
+export SUPPORT_RECORD
+
+GM_DEF += -DVERSION_NUMBER=\"$(APP_VERSION)\"
+
+ifeq ($(SUPPORT_RECORD), 1)
+GM_DEF += -D_SW_SUPPORT_RECORD_
+endif
+
+
 #*****************************************************************************
 # Inclue platfrom information
 #*****************************************************************************
