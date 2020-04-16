@@ -92,6 +92,28 @@ static bool add_item_to_object(JsonObject* object, const char* name, JsonObject*
     return add_item_to_array(object, item);
 }
 
+static JsonObject* json_create_false(void)
+{
+    JsonObject* item = json_create();
+    if(item)
+    {
+        item->type = JSON_FALSE;
+    }
+
+    return item;
+}
+
+static JsonObject* json_create_true(void)
+{
+    JsonObject* item = json_create();
+    if(item)
+    {
+        item->type = JSON_TRUE;
+    }
+
+    return item;
+}
+
 static JsonObject* json_create_int(double value)
 {
     JsonObject* item = json_create();
@@ -127,6 +149,7 @@ static JsonObject* json_create_string(const char *string)
     return item;
 }
 
+
 JsonObject* json_create(void)
 {
 	JsonObject* p_object = (JsonObject*)GM_MemoryAlloc(sizeof(JsonObject));
@@ -151,12 +174,36 @@ void json_destroy(JsonObject* p_object)
 		}
 		GM_MemoryFree(pChild->name);
 
+		if (pChild->child)
+		{
+			json_destroy((JsonObject*)pChild->child);
+		}
         pNext = (JsonObject*)pChild->next;
         GM_MemoryFree(pChild);
 
 		pChild = (JsonObject*)pNext;
     }
     GM_MemoryFree(p_object);
+}
+
+JsonObject* json_add_false(JsonObject*     p_object, const char* name)
+{
+	JsonObject* int_item = json_create_false();
+	if (add_item_to_object(p_object, name, int_item))
+	{
+		return int_item;
+	}
+	return NULL;
+}
+
+JsonObject* json_add_true(JsonObject*     p_object, const char* name)
+{
+	JsonObject* int_item = json_create_true();
+	if (add_item_to_object(p_object, name, int_item))
+	{
+		return int_item;
+	}
+	return NULL;
 }
 
 JsonObject* json_add_int(JsonObject*     p_object, const char* name, const int value)
@@ -189,7 +236,20 @@ JsonObject* json_add_string(JsonObject*     p_object, const char* name, const ch
     return NULL;
 }
 
-bool json_print_to_buffer(JsonObject* object, char* buffer, const int length)
+
+JsonObject* json_add_object(JsonObject *p_object, const char *name)
+{
+	JsonObject *object_item = json_create();
+	if (add_item_to_object(p_object, name, object_item))
+	{
+		return object_item;
+	}
+	
+	return NULL;
+}
+
+
+u16 json_print_to_buffer(JsonObject* object, char* buffer, const int length)
 {
 	U16 index = 0;
 	U8 item_num = 0;
@@ -197,7 +257,7 @@ bool json_print_to_buffer(JsonObject* object, char* buffer, const int length)
 	
 	if(NULL == buffer || NULL == object)
 	{
-		return false;
+		return 0;
 	}
 	buffer[index++] = '{';
 
@@ -208,10 +268,19 @@ bool json_print_to_buffer(JsonObject* object, char* buffer, const int length)
 		{
 			buffer[index++] = ',';
 		}
-    	index += sprintf(buffer+index, "\"%s\"", item->name);
+    	index += GM_sprintf(buffer+index, "\"%s\"", item->name);
 		buffer[index++] = ':';
 	    switch ((item->type) & 0xFF)
 	    {
+	    	case JSON_OBJECT:
+	    		index += json_print_to_buffer(item, buffer+index, length);
+				break;
+			case JSON_FALSE:
+	            index += GM_sprintf(buffer+index, "false");
+				break;
+			case JSON_TRUE:
+	            index += GM_sprintf(buffer+index, "true");
+				break;
 	    	case JSON_INT:
 	            index += GM_sprintf(buffer+index, "%d", item->int_value);
 				break;
@@ -228,8 +297,7 @@ bool json_print_to_buffer(JsonObject* object, char* buffer, const int length)
 		item_num++;
     }
 	buffer[index++] = '}';
-	buffer[index++] = '\0';
-	return true;
+	return index;
 }
 
 

@@ -6,6 +6,7 @@
 #include "error_code.h"
 #include "gm_time.h"
 #include "time.h"
+#include "stdint.h"
 
 #define BIT0    0x0001
 #define BIT1    0x0002
@@ -175,34 +176,34 @@ typedef enum
 typedef struct
 {
 	bool state;
-	//报警状态保持时间(秒)
+	//报警状态保持时�?�?
 	U32 true_state_hold_seconds;
 	
-    //正常状态保持时间(秒)
+    //正常状态保持时�?�?
 	U32 false_state_hold_seconds;
 
 }StateRecord,*PStateRecord;
 
 
-//GPS的时间起点是1980.1.6 从1970年到1980.1.6的秒数
+//GPS的时间起点是1980.1.6 �?970年到1980.1.6的秒�?
 #define SECONDS_FROM_UTC_TO_GPS_START     (315936000+8*3600)
 
 /**
  * Function:   创建util模块
  * Description:创建util模块
- * Input:	   无
- * Output:	   无
- * Return:	   GM_SUCCESS——成功；其它错误码——失败
- * Others:	   使用前必须调用,否则调用其它接口返回失败错误码
+ * Input:	   �?
+ * Output:	   �?
+ * Return:	   GM_SUCCESS——成功；其它错误码——失�?
+ * Others:	   使用前必须调�?否则调用其它接口返回失败错误�?
  */
 GM_ERRCODE util_create(void);
 
 /**
  * Function:   销毁util模块
  * Description:销毁util模块
- * Input:	   无
- * Output:	   无
- * Return:	   GM_SUCCESS——成功；其它错误码——失败
+ * Input:	   �?
+ * Output:	   �?
+ * Return:	   GM_SUCCESS——成功；其它错误码——失�?
  * Others:	   
  */
 GM_ERRCODE util_destroy(void);
@@ -211,9 +212,9 @@ GM_ERRCODE util_destroy(void);
 /**
  * Function:   util模块定时处理入口
  * Description:uart模块定时处理入口
- * Input:	   无
- * Output:	   无
- * Return:	   GM_SUCCESS——成功；其它错误码——失败
+ * Input:	   �?
+ * Output:	   �?
+ * Return:	   GM_SUCCESS——成功；其它错误码——失�?
  * Others:	   
  */
 GM_ERRCODE util_timer_proc(void);
@@ -222,10 +223,10 @@ GM_ERRCODE util_timer_proc(void);
 /**
  * Function:   
  * Description:change character hex number to real number
- * Input:	   无
- * Output:	   无
- * Return:	   无
- * Others:	   无
+ * Input:	   �?
+ * Output:	   �?
+ * Return:	   �?
+ * Others:	   �?
  */
 u8 util_chr(u8 x);
 
@@ -233,9 +234,9 @@ u8 util_chr(u8 x);
 /**
  * Function:   
  * Description: change number to character hex number.
- * Input:	   无
- * Output:	   无
- * Return:	   无
+ * Input:	   �?
+ * Output:	   �?
+ * Return:	   �?
  * Others:	   if x is not number, it will be changed as unrecognize_char, normally is 'x' or '0'
  */
 u8 util_asc(u8 x, u8 unrecognize_char);
@@ -244,10 +245,10 @@ u8 util_asc(u8 x, u8 unrecognize_char);
 /**
  * Function:   
  * Description: remove a char from pdata
- * Input:	   无
- * Output:	   无
- * Return:	   无
- * Others:	   无
+ * Input:	   �?
+ * Output:	   �?
+ * Return:	   �?
+ * Others:	   �?
  */
 u16 util_remove_char(u8 *pdata, u16 len,char c);
 
@@ -258,10 +259,10 @@ char util_to_lower(char c);
 /**
  * Function:   
  * Description:change pdata string to upper case
- * Input:	   无
- * Output:	   无
- * Return:	   无
- * Others:	   无
+ * Input:	   �?
+ * Output:	   �?
+ * Return:	   �?
+ * Others:	   �?
  */
 void util_string_upper(u8 *pdata, u16 len);
 
@@ -269,10 +270,10 @@ void util_string_upper(u8 *pdata, u16 len);
 /**
  * Function:   
  * Description: change pdata string to lower case
- * Input:	   无
- * Output:	   无
- * Return:	   无
- * Others:	   无
+ * Input:	   �?
+ * Output:	   �?
+ * Return:	   �?
+ * Others:	   �?
  */
 void util_string_lower(u8 *pdata, u16 len);
 
@@ -281,9 +282,9 @@ void util_string_lower(u8 *pdata, u16 len);
  * Function:   
  * Description:check whether pdns is valid dns
  * Input:	   pdns  len
- * Output:	   无
+ * Output:	   �?
  * Return:	   vaild dns return 1, else retun 0
- * Others:	   无
+ * Others:	   �?
  */
 u8 util_is_valid_dns(const u8 *pdns, u16 len);
 
@@ -291,9 +292,9 @@ u8 util_is_valid_dns(const u8 *pdns, u16 len);
  * Function:   
  * Description:check whether ip is valid ip
  * Input:	   ip    len
- * Output:	   无
+ * Output:	   �?
  * Return:	   vaild dns return 1, else retun 0
- * Others:	   无
+ * Others:	   �?
  */
 u8 util_is_valid_ip(const u8 *ip, u16 len);
 
@@ -301,19 +302,19 @@ u8 util_is_valid_ip(const u8 *ip, u16 len);
  * Function:   
  * Description:check whether ip is internal IP
  * Input:	   ip    len
- * Output:	   无
+ * Output:	   �?
  * Return:	   internal IP return true, else retun false
- * Others:	   无
+ * Others:	   �?
  */
 bool util_is_internal_ip(const u8 *ip, u16 len);
 
 /**
  * Function:   
  * Description: get current time to pdata(bcd format) and time(ST_Time format) based on zone.
- * Input:	   无
- * Output:	   无
+ * Input:	   �?
+ * Output:	   �?
  * Return:	   success.
- * Others:	   无
+ * Others:	   �?
  */
 GM_ERRCODE util_get_current_local_time(u8* pdata, ST_Time* time, u8 zone);
 
@@ -322,18 +323,18 @@ GM_ERRCODE util_get_current_local_time(u8* pdata, ST_Time* time, u8 zone);
  * Function:   
  * Description: change seconds to bcd time.
  * Input:	   sec_time UTC format
- * Output:	   无
- * Return:	   无
- * Others:	   无
+ * Output:	   �?
+ * Return:	   �?
+ * Others:	   �?
  */
 void util_utc_sec_to_bcdtime_base2000(time_t sec_time, u8 *bcd, u8 zone);
 
 /**
- * Function:   判断是否是闰年
+ * Function:   判断是否是闰�?
  * Description:
- * Input:	   year:年
+ * Input:	   year:�?
  * Output:	   
- * Return:	   true——是闰年；false——不是闰年
+ * Return:	   true——是闰年；false——不是闰�?
  * Others:	   
  */
 bool util_is_leap_year(U16 year);
@@ -342,7 +343,7 @@ bool util_is_leap_year(U16 year);
  * Function:   时间戳转换成数据结构
  * Description:替换time系统函数
  * Input:	   p_time:指向时间戳的指针
- * Output:	   无
+ * Output:	   �?
  * Return:	   时间数据结构
  * Others:	   
  */
@@ -351,18 +352,18 @@ struct tm util_gmtime(time_t t);
 /**
  * Function:   时间数据结构转换成时间戳
  * Description:替换time系统函数
- * Input:	   t:指向时间数据结构的指针
- * Output:	   无
- * Return:	   时间戳
+ * Input:	   t:指向时间数据结构的指�?
+ * Output:	   �?
+ * Return:	   时间�?
  * Others:	   
  */
 time_t util_mktime(struct tm* t);
 
 /**
- * Function:   时间戳 转换成 时间数据结构
+ * Function:   时间�?转换�?时间数据结构
  * Description:替换time系统函数
  * Input:	   srctime:指向时间戳的指针
- * Output:	   无
+ * Output:	   �?
  * Return:	   时间数据结构
  * Others:	   
  */
@@ -371,32 +372,32 @@ struct tm * util_localtime(const time_t *srctime);
 /**
  * Function:   把MTK时间转换为GPS时间
  * Description:
- * Input:	   st_time:MTK时间；leap_sencond——闰秒值
- * Output:	   p_tow:周内时间（秒）；p_wn:周数（从1980年1月1日开始）
- * Return:	   无
- * Others:	   GPS时间格式,用周数和周内时表示,GPS的时间起点是1980.1.6
-			   GPS时间没有闰秒修正,是连续的时间,而常规时间是经过闰秒修正的
-			   2016年的闰秒修正值是17秒
+ * Input:	   st_time:MTK时间；leap_sencond——闰秒�?
+ * Output:	   p_tow:周内时间（秒）；p_wn:周数（从1980�?�?日开始）
+ * Return:	   �?
+ * Others:	   GPS时间格式,用周数和周内时表�?GPS的时间起点是1980.1.6
+			   GPS时间没有闰秒修正,是连续的时间,而常规时间是经过闰秒修正�?
+			   2016年的闰秒修正值是17�?
  */
 void util_mtktime_to_gpstime(const ST_Time st_time, const U8 leap_sencond, double* p_tow, U16* p_wn);
 
 
 /**
- * Function:   mtktime 转换为 tm
+ * Function:   mtktime 转换�?tm
  * Description:
- * Input:	   无
- * Output:	   无
- * Return:	   Linux时间结构体
+ * Input:	   �?
+ * Output:	   �?
+ * Return:	   Linux时间结构�?
  * Others:	   
  */
 void util_mtktime_to_tm(const ST_Time *mtk_t, struct tm *tm_t);
 
 /**
- * Function:   tm 转换为 mtktime 
+ * Function:   tm 转换�?mtktime 
  * Description:
- * Input:	   无
- * Output:	   无
- * Return:	   Linux时间结构体
+ * Input:	   �?
+ * Output:	   �?
+ * Return:	   Linux时间结构�?
  * Others:	   
  */
 void util_tm_to_mtktime(const struct tm *tm_t, ST_Time *mtk_t);
@@ -404,9 +405,9 @@ void util_tm_to_mtktime(const struct tm *tm_t, ST_Time *mtk_t);
 /**
  * Function:   获取UTC时间
  * Description:
- * Input:	   无
+ * Input:	   �?
  * Output:	   
- * Return:	   Linux时间结构体
+ * Return:	   Linux时间结构�?
  * Others:	   
  */
 time_t util_get_utc_time(void);
@@ -415,10 +416,10 @@ time_t util_get_utc_time(void);
 /**
  * Function:   获取开机以来的秒数
  * Description:
- * Input:	   无
+ * Input:	   �?
  * Output:	   
  * Return:	   开机以来的秒数
- * Others:	   每隔229天1小时54分36秒会翻转至0
+ * Others:	   每隔229�?小时54�?6秒会翻转�?
  */
 u32 util_clock(void);
 
@@ -427,7 +428,7 @@ u32 util_clock(void);
  * Function :
  * Description :
  *      Unicode符号范围         UTF-8编码方式
- *         十六进制               二进制
+ *         十六进制               二进�?
  *      0000 0000-0000 007F | 0xxxxxxx
  *      0000 0080-0000 07FF | 110xxxxx 10xxxxxx
  *      0000 0800-0000 FFFF | 1110xxxx 10xxxxxx 10xxxxxx
@@ -437,10 +438,10 @@ u32 util_clock(void);
  *      utf8StrLen  -- max utf8 length
  *      unStr  ---  Unicode Str dest
  *      unMaxLen --- Unicode max length
- *      return : ----  实际转化的长度
+ *      return : ----  实际转化的长�?
 
  *      把UTF-8转成双字节的UNICODE
- *      E6 96 AD(汉字"断"的UTF-8编码) ---> 0x65AD (即汉字"断"的UNICODE)
+ *      E6 96 AD(汉字"�?的UTF-8编码) ---> 0x65AD (即汉�?�?的UNICODE)
 
  *  Parameter :
  *  Return :
@@ -467,7 +468,7 @@ u16 util_ucs2_u16_to_u8(const u16 *input, u16 len, u8 *output);
 /************************************************************************
  * Function :
  * Description :
- *   把双字节的UNICODE 字节反过来
+ *   把双字节的UNICODE 字节反过�?
  *   0x1234 ---> 0x3412
 
  * Parameter :
@@ -481,9 +482,9 @@ u16 util_ucs2_byte_revert(u8 *pdata, u16 len);
 /************************************************************************
  * Function :
  * Description :
- *   long转成ascii字符串
+ *   long转成ascii字符�?
  *   withZero=1 0x0123456->"0123456"    包括0
- *   withZero=0 0x0123456->"123456"    不包括0
+ *   withZero=0 0x0123456->"123456"    不包�?
  * Parameter :
  * Return :
  * Author:
@@ -517,15 +518,15 @@ u16 util_ucs2_to_ascii(const u8 *w_in, u8 *a_out, u16 len);
 /************************************************************************
  * Function:   将海里转换为公里
  * Description:
- * Input:	   无
+ * Input:	   �?
  * Output:	   
- * Return:	   Linux时间结构体
+ * Return:	   Linux时间结构�?
  * Others:	   
  ************************************************************************/
 float util_mile_to_km(const float miles);
 
 /************************************************************************
- * Function:   判断字符是否为数字
+ * Function:   判断字符是否为数�?
  * Description:
  * Input:	   c:字符
  * Output:	   
@@ -546,24 +547,48 @@ bool util_isdigit(const char c);
 bool util_isprint(const char c);
 
 /************************************************************************
- * Function:   将10进制数字符串转换成长整型
+ * Function:   �?0进制数字符串转换成长整型
  * Description:https://baike.baidu.com/item/strtol/6134558
  * Input:	   cp:字符串；
- * Output:	   endptr:是一个传出参数,函数返回时指向后面未被识别的第一个字符
+ * Output:	   endptr:是一个传出参�?函数返回时指向后面未被识别的第一个字�?
  * Return:	   true——是；false——否
  * Others:	   
  ************************************************************************/
 S32 util_strtol(const char* cp,char** endp);
 
+u32 util_hexstrtoul(const char* cp);
+
+
 /**
- * Function:   检查状态发生了什么变化
- * Description:当前状态与历史状态不同,并且保持时间足够认为状态发生了变化并记录为新的历史状态
- * Input:      current_state:当前状态；p_record:历史状态记录；true_hold_time_threshold:true状态保持时间阈值；false_hold_time_threshold:false状态保持时间阈值
- * Output:     p_record:历史状态记录
- * Return:     GM_CHANGE_TRUE——变为true状态；GM_NO_CHANGE——不变；GM_CHANGE_FALSE——变为false状态
+ * Function:   检查状态发生了什么变�?
+ * Description:当前状态与历史状态不�?并且保持时间足够认为状态发生了变化并记录为新的历史状�?
+ * Input:      current_state:当前状态；p_record:历史状态记录；true_hold_time_threshold:true状态保持时间阈值；false_hold_time_threshold:false状态保持时间阈�?
+ * Output:     p_record:历史状态记�?
+ * Return:     GM_CHANGE_TRUE——变为true状态；GM_NO_CHANGE——不变；GM_CHANGE_FALSE——变为false状�?
  * Others:      
  */	
 GM_CHANGE_ENUM util_check_state_change(bool current_state, PStateRecord p_record, U16 true_hold_time_threshold, U16 false_hold_time_threshold);
+
+/**********************************************************
+GSM PDU 7bit字符串解码，�?bit PDU字符串转为ASCII字符�?
+"E8329BFD4697D9EC37"----->"hellohello"
+pDst：解码后的ASCII字符串目标指�?
+pSrc：解码前的PDU 7bit字符串指�?
+返回：解码后的ASCII字符串长�?
+***********************************************************/
+int util_pdu_7bit_decoding(char *pDst,char *pSrc);
+
+/**********************************************************
+GSM PDU 7bit编码，由ASCII字符串转为编码后�?bit PDU字符�?
+"hellohello"----->"E8329BFD4697D9EC37"
+pDst：编码后的目标指�?
+pSrc：编码前的ASCII字符串指�?
+返回：编码后的字符数据长�?
+***********************************************************/
+int util_pdu_7bit_encoding(unsigned char *pDst,char *pSrc);
+
+
+int util_memmem(char * haystack, int haystacklen, char * needle, int needlelen);
 
 #endif
 

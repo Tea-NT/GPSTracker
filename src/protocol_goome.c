@@ -17,6 +17,10 @@
 #include "command.h"
 #include "applied_math.h"
 #include "agps_service.h"
+#include "json.h"
+#include "wifi.h"
+#include "recorder.h"
+#include "hard_ware.h"
 
 typedef enum
 {
@@ -29,10 +33,16 @@ typedef enum
     PROTOCCOL_GOOME_HEART_EXPAND = 0x07, // 扩展心跳数据包
     PROTOCCOL_GOOME_TIME_CALIB = 0x08,  // 时间校准包    谷米暂无
     PROTOCCOL_GOOME_ICCID_MSG = 0x09,
+    PROTOCCOL_GOOME_RECODER_START = 0x0A, //开启录音
+    PROTOCCOL_GOOME_RECODER_STOP = 0x0B, //停止录音
+    PROTOCCOL_GOOME_RECODER_FILE = 0x0C, //录音文件
+    PROTOCCOL_GOOME_DEVICE_STATE = 0x0D, //同步设备当前状态
     PROTOCCOL_GOOME_REMOTE_MSG = 0x80,
     PROTOCCOL_GOOME_GENERAL_MSG = 0x81, // 普通消息下发数据包 
     PROTOCCOL_GOOME_FULL_LBS = 0x91, // 多基站数据
+    PROTOCCOL_GOOME_WIFI = 0x92, // WIFI数据
     PROTOCCOL_GOOME_STATUS_MSG = 0x94, //信息传输通用包
+    PROTOCCOL_GOOME_TRANSPARENT = 0xFE, //透传传输
 }ProtocolGoomeCmdEnum;;
 
 
@@ -53,12 +63,14 @@ static void protocol_goome_pack_id_len(U8* pdata, u8 id, u16 len);
 static void protocol_goome_pack_iccid(U8* pdata, u16 *idx, u16 len);
 static void protocol_goome_pack_lbs(U8* pdata, u16 *idx, u16 len);
 static void protocol_goome_pack_lbses(U8* pdata, u16 *idx, u16 len);
+static void protocol_goome_pack_wifis(U8* pdata, u16 *idx, u16 len);
 static void protocol_goome_pack_locate_status(U8* pdata, u16 *idx, u16 len);
 static void protocol_goome_pack_alarm(AlarmInfo *alarm,U8* pdata, u16 *idx, u16 len);
 static void protocol_goome_pack_csq(U8* pdata, u16 *idx, u16 len);
 static void protocol_goome_pack_power_voltage(U8* pdata, u16 *idx, u16 len);
 static void protocol_goome_pack_gps_signal_quality(U8* pdata, u16 *idx, u16 len);
-
+static void protocol_goome_pack_temperature(U8* pdata, u16 *idx, u16 len);
+static void protocol_goome_pack_signal(U8* pdata, u16 *idx, u16 len);
 static void protocol_goome_parse_login_response(U8* pdata, u16 len);
 static void protocol_goome_parse_remote_msg(U8* pdata, u16 len);
 
@@ -172,10 +184,16 @@ static void protocol_goome_pack_id_len(U8* pdata, u8 id, u16 len)
 
 static void protocol_goome_pack_power_voltage(U8* pdata, u16 *idx, u16 len)
 {
-    U8 percent = 0.0;
-    hard_ware_get_internal_battery_percent(&percent);
-    pdata[(*idx)++] = percent;
+	if (hard_ware_has_battery())
+	{
+		pdata[(*idx)++] = hard_ware_get_internal_battery_percent();
+	}
+	else
+	{
+		pdata[(*idx)++] = 0x00;
+	}
 }
+
 
 static void protocol_goome_pack_csq(U8* pdata, u16 *idx, u16 len)
 {
@@ -241,10 +259,90 @@ static void protocol_goome_pack_extern_power(U8* pdata, u16 *idx, u16 len)
 static void protocol_goome_pack_gps_signal_quality(U8* pdata, u16 *idx, u16 len)
 {
     GPSData gps;
+    u8 signal_level;
     GM_memset(&gps,0,sizeof(gps));
     gps_get_last_data(&gps);
-    pdata[(*idx)++] = gps.signal_intensity_grade;
+    signal_level = gps.signal_intensity_grade;
+    if (!gps_is_fixed())
+    {
+    	signal_level = 0;
+    }
+    pdata[(*idx)++] = signal_level;
 }
+
+
+static void protocol_goome_pack_temperature(U8* pdata, u16 *idx, u16 len)
+{
+	JsonObject *p_temp = NULL;
+	JsonObject *p_temp_value = NULL;
+	
+	if((*idx) + 30 > len)
+	{
+		LOG(WARN,"clock(%d) protocol_goome_pack_temperature assert(len(%d)) failed.", util_clock(), len);
+		return;
+	}
+
+	p_temp = json_create();
+	p_temp_value = json_add_object(p_temp, "TEMP");
+	json_add_int(p_temp_value, "temperature", hard_ware_get_temperature());
+	(*idx) += json_print_to_buffer(p_temp, (char *)&pdata[(*idx)], len-(*idx));
+	json_destroy(p_temp);
+	p_temp_value = NULL;
+	p_temp = NULL;
+}
+
+
+static void protocol_goome_pack_signal(U8* pdata, u16 *idx, u16 len)
+{
+	JsonObject *p_object = NULL;
+	JsonObject *p_signal = NULL;
+	JsonObject *p_gps = NULL;
+	const SNRInfo* snr_info = NULL;
+	u8 index = 0;
+	char prn_str[5] = {0};
+	
+	if((*idx) + 30 > len)
+	{
+		LOG(WARN,"clock(%d) protocol_goome_pack_signal assert(len(%d)) failed.", util_clock(), len);
+		return;
+	}
+
+	p_object = json_create();
+	p_signal = json_add_object(p_object, "Signal");
+	if (GM_SYSTEM_STATE_WORK == system_state_get_work_state())
+	{
+		p_gps = json_add_object(p_signal, "gps");
+		snr_info = gps_get_snr_array();
+		for(index = 0;index < 5;index++)
+		{
+			if (snr_info[index].snr != 0)
+			{
+				GM_sprintf(prn_str, "%d", snr_info[index].prn);
+				json_add_int(p_gps, prn_str, snr_info[index].snr);
+				GM_memset(prn_str, 0, sizeof(prn_str));
+			}
+		}
+		
+		if (gps_is_fixed())
+		{
+			json_add_true(p_signal, "fix");
+		}
+		else
+		{
+			json_add_false(p_signal, "fix");
+		}
+	}
+	json_add_int(p_signal, "csq", gsm_get_csq());
+	
+	(*idx) += json_print_to_buffer(p_object, (char *)&pdata[(*idx)], len-(*idx));
+	
+	json_destroy(p_object);
+	p_gps = NULL;
+	p_signal = NULL;
+	p_object = NULL;
+}
+
+
 
 
 //6767 07 000B 0003 02EE 043700000F0000
@@ -266,7 +364,7 @@ static void protocol_goome_pack_status(U8* pdata, u16 *idx, u16 len)
         SET_BIT0(data);
     }
 
-    if (GM_SUCCESS == hard_ware_get_acc_level(&acc_on))
+    if (GM_SUCCESS == hard_ware_get_acc_level(&acc_on) && !hard_ware_is_device_w())
     {
         if(acc_on)
         {
@@ -328,6 +426,25 @@ static void protocol_goome_pack_status(U8* pdata, u16 *idx, u16 len)
         default:
             SET_BIT10(data);
             break;
+    }
+
+    if (hard_ware_is_device_w())
+	{
+		config_service_get(CFG_WORKMODE, TYPE_BYTE, &value_u8, sizeof(value_u8));
+		if (value_u8==2)
+		{
+			SET_BIT11(data);
+		}
+		else if (value_u8==1)
+		{
+			SET_BIT13(data);
+		}
+	}
+	
+	//是否开启录音
+    if (hard_ware_device_has_recorder() && system_state_get_recorder())
+    {
+    	SET_BIT12(data);
     }
 
     pdata[(*idx)++] = BHIGH_BYTE(data);
@@ -424,13 +541,13 @@ static void protocol_goome_pack_gps(const GPSData *gps, U8* pdata, u16 *idx, u16
     pdata[(*idx)++] = BHIGH_BYTE(WLOW_WORD(longitudev));
     pdata[(*idx)++] = BLOW_BYTE(WLOW_WORD(longitudev));
     
-    
     // 速度
     gps_speed = gps->speed;
     if (gps_speed > 180)
     {
         gps_speed = 180;
     }
+	
     pdata[(*idx)++] = (u8)gps_speed;
 
      // 角度
@@ -479,6 +596,65 @@ static void protocol_goome_pack_lbs(U8* pdata, u16 *idx, u16 len)
 }
 
 
+static void protocol_goome_pack_wifis(U8* pdata, u16 *idx, u16 len)
+{
+    wlan_scan_cnf_struct ap;
+    u32 cur_time;
+    u16 k = 0;
+    u16 num=0;
+    
+    GM_memset(&ap,0, sizeof(wlan_scan_cnf_struct));
+    
+    if((*idx) + 75 > len)
+    {
+        LOG(WARN,"clock(%d) protocol_goome_pack_wifis assert(len(%d)) failed.", util_clock(), len);
+        return;
+    }
+
+	GM_memcpy(&ap.scan_ap, get_wifi_scan_ap_info(), sizeof(scanonly_scan_ap_info_struct)*SCANONLY_MAX_SCAN_AP_NUM);
+	ap.scan_ap_num = get_wifi_scan_ap_num();
+    LOG(DEBUG,"clock(%d) protocol_goome_pack_wifis wifi(%d).", util_clock(), ap.scan_ap_num);
+
+    //日期时间
+    cur_time = util_get_utc_time();
+    pdata[(*idx)++] = BHIGH_BYTE(WHIGH_WORD(cur_time));
+    pdata[(*idx)++] = BLOW_BYTE(WHIGH_WORD(cur_time));
+    pdata[(*idx)++] = BHIGH_BYTE(WLOW_WORD(cur_time));
+    pdata[(*idx)++] = BLOW_BYTE(WLOW_WORD(cur_time));
+    
+    if (ap.scan_ap_num > 10)
+    {
+        num = 10;
+    }
+    else
+    {
+        num = ap.scan_ap_num;
+    }
+
+	pdata[(*idx)++] = num;
+    GM_memset(&pdata[(*idx)], 0, 70);
+    for (k=0; k<num; k++) // 70B
+    {
+        pdata[(*idx)++] = ap.scan_ap[k].bssid[0];
+		pdata[(*idx)++] = ap.scan_ap[k].bssid[1];
+		pdata[(*idx)++] = ap.scan_ap[k].bssid[2];
+		pdata[(*idx)++] = ap.scan_ap[k].bssid[3];
+		pdata[(*idx)++] = ap.scan_ap[k].bssid[4];
+		pdata[(*idx)++] = ap.scan_ap[k].bssid[5];
+        pdata[(*idx)++] = ap.scan_ap[k].rssi;
+    }
+}
+
+
+void protocol_goome_pack_wifi_msg(U8* pdata, u16 *idx, u16 len)
+{
+    protocol_goome_pack_head(pdata, idx, len);  //7 bytes
+    protocol_goome_pack_wifis(pdata, idx, len);  //75 bytes    
+    protocol_goome_pack_id_len(pdata, PROTOCCOL_GOOME_WIFI, *idx);
+}
+
+
+
 void protocol_goome_pack_login_msg(U8* pdata, u16 *idx, u16 len)
 {
     protocol_goome_pack_head(pdata, idx, len);  //7 bytes
@@ -490,6 +666,27 @@ void protocol_goome_pack_login_msg(U8* pdata, u16 *idx, u16 len)
     protocol_goome_pack_id_len(pdata, PROTOCCOL_GOOME_LOGIN, *idx);
 }
 
+
+void protocol_goome_pack_temperature_msg(U8* pdata, u16 *idx, u16 len)
+{
+    protocol_goome_pack_head(pdata, idx, len);  //7 bytes
+    
+    protocol_goome_pack_temperature(pdata, idx, len);
+
+    protocol_goome_pack_id_len(pdata, PROTOCCOL_GOOME_TRANSPARENT, *idx);
+
+}
+
+
+void protocol_goome_pack_signal_msg(U8* pdata, u16 *idx, u16 len)
+{
+    protocol_goome_pack_head(pdata, idx, len);
+    
+    protocol_goome_pack_signal(pdata, idx, len);
+
+    protocol_goome_pack_id_len(pdata, PROTOCCOL_GOOME_TRANSPARENT, *idx);
+
+}
 
 
 void protocol_goome_pack_heartbeat_msg(U8* pdata, u16 *idx, u16 len)
@@ -511,26 +708,27 @@ void protocol_goome_pack_heartbeat_msg(U8* pdata, u16 *idx, u16 len)
 static void protocol_goome_pack_locate_status(U8* pdata, u16 *idx, u16 len)
 {
     bool acc_on = false;
+    u8 state = 0;
 	
     if (gps_is_fixed())
     {
-        SET_BIT0(pdata[(*idx)]);
+        SET_BIT0(state);
     }
     else
     {
-        CLR_BIT0(pdata[(*idx)]);
+        CLR_BIT0(state);
     }
 
-    if (GM_SUCCESS == hard_ware_get_acc_level(&acc_on) && acc_on)
+    if (GM_SUCCESS == hard_ware_get_acc_level(&acc_on) && acc_on && !hard_ware_is_device_w())
     {
-        SET_BIT1(pdata[(*idx)]);
+        SET_BIT1(state);
     }
     else
     {
-        CLR_BIT1(pdata[(*idx)]);
+        CLR_BIT1(state);
     }
-    
-    (*idx)++;
+
+    pdata[(*idx)++] = state;
 }
 
 
@@ -626,6 +824,63 @@ void protocol_goome_pack_lbs_msg(U8* pdata, u16 *idx, u16 len)
     protocol_goome_pack_id_len(pdata, PROTOCCOL_GOOME_FULL_LBS, *idx);
 }
 
+#ifdef _SW_SUPPORT_RECORD_
+static void protocol_goome_pack_recorder_state(U8* pdata, u16 *idx, u16 len)
+{
+    if((*idx) + 1 > len)
+    {
+        LOG(WARN,"clock(%d) protocol_goome_pack_recorder_state assert(len(%d)) failed.", util_clock(), len);
+        return;
+    }
+
+	pdata[(*idx)++] = get_recorder_response_state();
+}
+
+
+
+
+void protocol_goome_pack_recorder_response_msg(bool start, U8* pdata, u16 *idx, u16 len)
+{
+    protocol_goome_pack_head(pdata, idx, len);  //7 bytes
+    protocol_goome_pack_recorder_state(pdata, idx, len);  //1 bytes    
+    if (start)
+    {
+    	protocol_goome_pack_id_len(pdata, PROTOCCOL_GOOME_RECODER_START, *idx);
+    }
+    else
+    {
+    	protocol_goome_pack_id_len(pdata, PROTOCCOL_GOOME_RECODER_STOP, *idx);
+    }
+}
+
+
+static void protocol_goome_pack_recorder_data(void *arg, U8* pdata, u16 *idx, u16 len)
+{
+	RecoderSendRegStruct *op = arg;
+
+	if (((*idx) + op->pack_len + 8) > len)
+	{
+		LOG(WARN, "protocol_goome_pack_recorder_data assert(len(%d/%d)) failed.", util_clock(), op->pack_len, len);
+		return;
+	}
+
+	pdata[(*idx)++] = op->total_pack;
+	pdata[(*idx)++] = op->cur_pack;
+	GM_memcpy(&pdata[(*idx)], op->time, 6);
+	*idx += 6;
+	GM_memcpy(&pdata[(*idx)], op->data, op->pack_len);
+	*idx += op->pack_len;
+}
+
+
+void protocol_goome_pack_recorder_file_msg(void *arg, U8* pdata, u16 *idx, u16 len)
+{
+	protocol_goome_pack_head(pdata, idx, len);  //7 bytes
+    protocol_goome_pack_recorder_data(arg, pdata, idx, len);  //max 908 bytes    
+    protocol_goome_pack_id_len(pdata, PROTOCCOL_GOOME_RECODER_FILE, *idx);
+}
+#endif
+
 static void protocol_goome_pack_alarm(AlarmInfo *alarm,U8* pdata, u16 *idx, u16 len)
 {
     if((*idx) + 3 > len)
@@ -676,6 +931,54 @@ static void protocol_goome_parse_login_response(U8* pdata, u16 len)
 }
 
 
+static void protocol_goome_pack_work_mode(U8* pdata, u16 *idx, u16 len)
+{
+	u8 work_mode;
+	
+    if((*idx) + 3 > len)
+    {
+        LOG(WARN,"clock(%d) protocol_goome_pack_work_mode assert(len(%d)) failed.", util_clock(), len);
+        return;
+    }
+
+    config_service_get(CFG_WORKMODE, TYPE_BYTE, &work_mode, sizeof(work_mode));
+    pdata[(*idx)++] = TAG_WORK_MODE;
+    pdata[(*idx)++] = 1;
+    pdata[(*idx)++] = work_mode;
+}
+
+
+static void protocol_goome_pack_voice_energy(U8* pdata, u16 *idx, u16 len)
+{
+	u8 voice_enargy;
+	
+    if((*idx) + 3 > len)
+    {
+        LOG(WARN,"clock(%d) protocol_goome_pack_voice_energy assert(len(%d)) failed.", util_clock(), len);
+        return;
+    }
+
+    config_service_get(CFG_VOICE_ENERGY, TYPE_BYTE, &voice_enargy, sizeof(voice_enargy));
+    pdata[(*idx)++] = TAG_AUTO_RECORD_VOL;
+    pdata[(*idx)++] = 1;
+    pdata[(*idx)++] = voice_enargy;
+}
+
+
+
+void protocol_goome_pack_device_state_msg(U8* pdata, u16 *idx, u16 len)
+{
+
+    protocol_goome_pack_head(pdata, idx, len);  //7 bytes
+    protocol_goome_pack_work_mode(pdata, idx, len);  //3 bytes
+    protocol_goome_pack_voice_energy(pdata, idx, len);  //3 bytes
+    protocol_goome_pack_id_len(pdata, PROTOCCOL_GOOME_DEVICE_STATE, *idx);
+    return;
+}
+
+
+
+
 
 void protocol_goome_parse_msg(U8* pdata, u16 len)
 {
@@ -722,6 +1025,34 @@ void protocol_goome_parse_msg(U8* pdata, u16 len)
         case PROTOCCOL_GOOME_GENERAL_MSG:
             LOG(DEBUG,"clock(%d) protocol_goome_parse_msg(PROTOCCOL_GOOME_GENERAL_MSG).", util_clock());
             break;
+
+		#ifdef _SW_SUPPORT_RECORD_
+        case PROTOCCOL_GOOME_RECODER_START:
+        	LOG(DEBUG,"clock(%d) protocol_goome_parse_msg(PROTOCCOL_GOOME_RECODER_START).", util_clock());
+        	if (hard_ware_device_has_recorder())
+        	{
+        		system_state_set_recorder(true);
+        		start_record(true);
+        	}
+        	break;
+        case PROTOCCOL_GOOME_RECODER_STOP:
+        	LOG(DEBUG,"clock(%d) protocol_goome_parse_msg(PROTOCCOL_GOOME_RECODER_STOP).", util_clock());
+        	system_state_set_recorder(false);
+        	stop_record(true);
+        	break;
+		case PROTOCCOL_GOOME_RECODER_FILE:
+            LOG(DEBUG,"clock(%d) protocol_goome_parse_msg(PROTOCCOL_GOOME_RECODER_FILE).", util_clock());
+            recorder_file_send_ack(&pdata[7]);
+            break;
+        #endif
+
+        case PROTOCCOL_GOOME_DEVICE_STATE:
+        	LOG(DEBUG,"clock(%d) protocol_goome_parse_msg(PROTOCCOL_GOOME_DEVICE_STATE).", util_clock());
+			gps_service_report_device_state();
+			break;   
+		 case PROTOCCOL_GOOME_TRANSPARENT:
+        	LOG(DEBUG,"clock(%d) protocol_goome_parse_msg(PROTOCCOL_GOOME_TRANSPARENT).", util_clock());
+			break; 
         default:
             LOG(WARN,"clock(%d) protocol_goome_parse_msg assert(msgid(%d)) failed.", util_clock(), pdata[2]);
             break;

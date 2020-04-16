@@ -29,6 +29,8 @@
 typedef enum
 {
 	JSON_OBJECT = 0,
+	JSON_FALSE,
+	JSON_TRUE,
 	JSON_INT,
 	JSON_DOUBLE,
 	JSON_STRING,
@@ -67,6 +69,28 @@ JsonObject* json_create(void);
 void json_destroy(JsonObject* p_object);
 
 /**
+ * Function:   在json对象中添加一个false
+ * Description:使用完以后必须销毁，否则内存泄露
+ * Input:      p_object：指向对象的指针
+ * Output:     无
+ * Return:     无
+ * Others:     
+ */
+
+JsonObject* json_add_false(JsonObject*     p_object, const char* name);
+
+/**
+ * Function:   在json对象中添加一个true
+ * Description:使用完以后必须销毁，否则内存泄露
+ * Input:      p_object：指向对象的指针
+ * Output:     无
+ * Return:     无
+ * Others:     
+ */
+JsonObject* json_add_true(JsonObject*     p_object, const char* name);
+
+
+/**
  * Function:   在json对象中添加一个整数
  * Description:
  * Input:      p_object：指向对象的指针；name：名称；value：值
@@ -96,15 +120,27 @@ JsonObject* json_add_double(JsonObject*     p_object, const char* name, const do
  */
 JsonObject* json_add_string(JsonObject*     p_object, const char* name, const char* string);
 
+
+/**
+ * Function:   在json对象中添加一个object
+ * Description:对象内部会申请新的内存存储object，在销毁对象时释放
+ * Input:      p_object：指向对象的指针；name：名称；
+ * Output:     无
+ * Return:     object地址
+ * Others:     
+ */
+JsonObject* json_add_object(JsonObject *p_object, const char *name);
+
+
 /**
  * Function:   把json对象转成字符串打印到缓存
  * Description:
  * Input:      p_object：指向对象的指针；buffer：缓存；length：缓存长度
  * Output:     无
- * Return:     无
+ * Return:     返回打印到缓存的长度
  * Others:     
  */
-bool json_print_to_buffer(JsonObject* object, char* buffer, const int length);
+u16 json_print_to_buffer(JsonObject* object, char* buffer, const int length);
 
 #endif
 

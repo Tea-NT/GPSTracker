@@ -33,6 +33,10 @@
 #define GM_ICCID_LEN 20
 
 
+typedef void (*LbsCallBackFunc) (bool is_lte, void* lbs_msg);
+
+
+
 typedef enum 
 {
     FAKE_CELL_NORMAL = 0,
@@ -131,6 +135,21 @@ U8 gsm_get_csq(void);
  * Others:
  */
 GM_ERRCODE gsm_get_cell_info(gm_cell_info_struct* p_cell_info);
+
+/**
+ * Function:   获取基站信息
+ * Description:获取基站信息
+ * Input:	   无
+ * Output:	   基站信息
+ * Return:	   GM_SUCCESS——成功；其它错误码——失败
+ * Others:
+ */
+GM_ERRCODE gsm_get_lte_cell_info(gm_lte_cell_info_struct* p_cell_info);
+
+bool get_sim_valid(void);
+GsmRegState gsm_get_creg_state(void);
+
+
 
 #endif
 

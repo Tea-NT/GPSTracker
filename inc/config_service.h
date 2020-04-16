@@ -30,7 +30,6 @@
 #include "gps.h"
 
 //发布版修改这个数字
-#define VERSION_NUMBER  "2.0.93"
 
 
 #define APN_DEFAULT "CMNET"
@@ -44,7 +43,7 @@
 #define CONFIG_LITE_SERVER_IP          "119.23.109.222"
 #define CONFIG_GOOCAR_SERVER_ADDERSS   "gs03.szdatasource.com:8821"
 #define CONFIG_GOOCAR_SERVER_IP        "54.222.183.200"
-#define CONFIG_FACTORY_SERVER_ADDERSS  "factorytest.gpsorg.net:8821"
+#define CONFIG_FACTORY_SERVER_ADDERSS  "factorytest.gpsorg.net:8941"
 #define CONFIG_SERVER_ADDERSS          "config.gpsorg.net:39996"
 #define CONFIG_SERVER_IP               "47.106.251.151"
 #define CONFIG_AGPS_SERVER_ADDERSS     "agps.srv.gpsorg.net:8866"
@@ -53,6 +52,10 @@
 #define CONFIG_LOG_SERVER_IP           "47.106.251.151"
 #define GOOME_UPDATE_SERVER_DNS        "firmware.gpsorg.net:39999"
 #define GOOME_UPDATE_SERVER_IP         "47.106.251.151"
+
+//斯沃德平台地址
+#define CONFIG_SEEWORLD_SERVER_ADDERSS "a.whatsgps.com:6801"
+
 
 //主服务器内网IP，包括汽车在线接入和万物在线接入，还包括AGPS服务
 #define GOOME_MAIN_INTERNAL_IP "10.28.3.77"
@@ -65,7 +68,7 @@
 
 #define CONFIG_UPLOAD_TIME_MAX     10800ul
 #define CONFIG_UPLOAD_TIME_DEFAULT 10 
-#define CONFIG_UPLOAD_TIME_MIN     3 
+#define CONFIG_UPLOAD_TIME_MIN     0 
 #define CONFIG_SPEEDTHR_MAX        180
 #define CONFIG_SPEEDTHR_MIN        5
 #define CONFIG_STATIC_TIME_MAX     500
@@ -233,8 +236,8 @@ typedef enum
     // 上传时间间隔内,小速度漂移距离(56)
     CFG_DISTANCE_FOR_LOW_SPEED,    
 
-    // 是否关闭防漂移, 0打开防漂移   ,1 关闭防漂移
-    CFG_CLOSE_DRIFT_DETECT,    
+    // 是否只有中心号码才可以断油电, 0 不限 ,1 限制，默认0
+    CFG_LIMIT_RELAY_NUMBER,    
 
     // 超速报警开关, 1打开   , 0 关闭
     CFG_SPEED_ALARM_ENABLE,   
@@ -355,8 +358,24 @@ typedef enum
     //当前是否测试模式
     CFG_IS_TEST_MODE,
 
+	//录音有效DB值
+    CFG_VOICE_ENERGY,
 	//是定向卡吗？
 	CFG_IS_VPN_CARD,
+
+	CFG_TEMP_SENSOR,
+
+	CFG_KEY_FEATURE,
+    CFG_UPLOADTIME_BKP,
+
+	//工作模式：0——GPS定位；1——WiFi定位；2——LBS定位, 3, 4
+	CFG_WORKMODE,
+
+    CFG_GPM_INTERVAL,
+
+    CFG_4G_NWSCAN,
+
+    CFG_SIGNAL_INTERVAL,
 
     CFG_PARAM_MAX
 }ConfigParamEnum;
@@ -455,8 +474,22 @@ typedef enum
     DEVICE_GS05I, //2线双sensor 无电池
     DEVICE_GS05H, //4线双sensor
     DEVICE_GM06E, //同GS03A,客户定制
-    DEVICE_GS10,  //BMS管理
-
+    DEVICE_W1,	//无线，录音，无WIFI, 1200mAH
+    DEVICE_W3,	//无线，录音，WIFI, 3000mAH
+    DEVICE_W7,	//无线，录音，WIFI, 6000mAH
+    DEVICE_W12, //无线，录音，WIFI, 12000mAH
+    DEVICE_W18, //无线，录音，WIFI, 18000mAH
+    DEVICE_B1,  //OBD 接口，无诊断，无录音，无电池 12V 无反接保护
+    DEVICE_B3,  //OBD 接口，无诊断，录音，无电池 12V 无反接保护
+    DEVICE_B5,  //OBD 接口，无诊断，无录音，有电池 12V 无反接保护
+    DEVICE_B7,  //OBD 接口，无诊断，录音，有电池 12V 无反接保护
+    DEVICE_GS06,  //11线
+    DEVICE_GS08,
+    DEVICE_GS03C,//斯沃德定制型号，硬件同GS03B
+    DEVICE_GS03D,//斯沃德定制型号，硬件同GS03A
+    DEVICE_GS05C,//斯沃德定制型号，硬件同GS05B
+    DEVICE_GS05D,//斯沃德定制型号，硬件同GS05A
+    
     DEVICE_MAX,
 }ConfigDeviceTypeEnum;
 
@@ -469,6 +502,27 @@ typedef enum
     PWRALM_GPRS_SMS_CALL = 2,
     PWRALM_GPRS_CALL = 3,
 }PowerAlarmMode;
+
+
+typedef enum
+{
+    TEMP_MF52 = 0,
+    
+    TEMP_MAX
+}TempSensorType;
+
+
+typedef enum
+{
+    KEY_NONE = 0,
+    KEY_TEMP,
+    KEY_SOS,
+    
+    KEY_MAX
+}KeyFeatureEnum;
+
+
+
 
 /**
  * Function:   创建config_service模块
@@ -500,6 +554,8 @@ GM_ERRCODE config_service_destroy(void);
  */
 GM_ERRCODE config_service_timer_proc(void);
 
+
+void config_service_close_ok(void);
 
 /**
  * Function:   
@@ -584,6 +640,17 @@ ConfigProtocolEnum config_service_get_app_protocol(void);
  * Others:	   无
  */
 ConfigHearUploadEnum config_service_get_heartbeat_protocol(void);
+
+/**
+ * Function:   
+ * Description: 获取当前是否关闭GPS
+ * Input:	   无
+ * Output:	   无
+ * Return: true:关闭GPS, false:打开GPS
+ * Others:	   无
+ */
+bool config_service_get_gps_close(void);
+
 
 /**
  * Function:   
@@ -678,12 +745,12 @@ GM_ERRCODE config_service_save_to_local(void);
 /**
  * Function:    设置设备型号
  * Description: 设置当前设备型号
- * Input:	    configs列表指针
+ * Input:	    type——设备类型；setServer——是否根据型号修改服务器参数
  * Output:	    configs列表指针
  * Return:	    GM_SUCCESS 成功, 其它失败
  * Others:	    无
  */
-void config_service_set_device(ConfigDeviceTypeEnum type);
+void config_service_set_device(ConfigDeviceTypeEnum type ,bool setServer);
 
 
 /**
@@ -793,6 +860,10 @@ void config_service_change_port(ConfigParamEnum idx, u16 port);
 StreamType config_service_update_socket_type(void);
 
 StreamType config_service_agps_socket_type(void);
+
+
+void config_service_send_result(bool result);
+
 
 #endif
 

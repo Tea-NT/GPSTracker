@@ -99,6 +99,19 @@ void auto_test_acc_on(void);
   */
 void auto_test_acc_off(void);
 
+
+
+/**
+  * Function:	key脚AD值
+  * Description:
+  * Input:		AD值
+  * Output: 	无
+  * Return: 	无
+  * Others: 	无
+  */
+void auto_test_key_value(u32 value);
+
+
 /**
   * Function:	修复GSM校准值
   * Description:03设备校准值大于540修改为540,05设备校准值大于520修改为520
@@ -108,5 +121,29 @@ void auto_test_acc_off(void);
   * Others: 	无
   */
 void auto_test_repair_ramp(void);
+
+/**
+  * Function:	录音文件计数
+  * Description:自检模式时每录音成功一次计数加一
+  * Input:		无
+  * Output: 	无
+  * Return: 	无
+  * Others: 	无
+  */
+
+void auto_test_recorder_file_count(void);
+
+
+/**
+  * Function:	获取自动测试模式状态
+  * Description:获取自动测试模式状态
+  * Input:		无
+  * Output: 	无
+  * Return: 	true 正在自检，false 未自检
+  * Others: 	无
+  */
+bool get_auto_test_state(void);
+
+
 #endif
 

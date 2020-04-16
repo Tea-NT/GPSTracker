@@ -134,28 +134,30 @@ typedef struct
     u8 para_user[GOOME_APN_MAX_LENGTH];
     u8 para_pwd[GOOME_APN_MAX_LENGTH];   
     u8 para_sim[17];
-    u8 reserved_u8_1[13];
-    u32 reserved_u32_1[10];
     
+    u8 reserved_u8_1[13];
+    
+    u32 reserved_u32_1[10];
     u16 reserved_u16_1;  //RESERVED
+
     u16 jt_location_heart_time;  //用于判断部标位置数据心跳的发送间隔
     u16 upload_time;    //  定时判断时间
     u16 heart_interval;
-    u32 reserved_u32_2;
     
+    u32 reserved_u32_2;
     u16 reserved_u16_2;
     u16 distance_of_slow;  // 上传时间间隔内,小速度漂移距离
     u8  gps_update_gap;  //GPS定位检测时间,默认5秒
     u8  heart_protocol;  //0 自动检测模式   1 谷米正常心跳(0x03)  2 谷米扩展心跳(0x07)
     
     u8  local_time_hour;
-    u8  reserved_u8_2;
+    u8  voice_energy; //录音有效DB值 默认 0
 
     u8  speed_switch;  //默认关
     u8  speed_threshold;   // 超速阈?
     u8  speed_detect_time;   // 超速检测时?
-    u8  reserved_u8_3;
-    u8  reserved_u8_4;
+    u8  key_feature; //gs06 key脚功能，ADC2脚
+    u8  temp_sensor_type; //温度传感器类型 0 MF52
     /*
     bit0   0 自动设防模式,1 手动设防模式,默认自动设防
     bit1   0:关闭震动报警,1 开启震动报警,默认关闭
@@ -203,14 +205,14 @@ typedef struct
     u8  user_number_4[16];  // 管理号码4
     u8  reserved_u8_6[40];
     
-    u8  reserved_u8_7;
+    u8  work_mode;          // 工作模式：0——GPS定位；1——WiFi定位；2——LBS定位
     u8  reserved_u8_8;
     u8  reserved_u8_9;
     u8  reserved_u8_10;
     u16 power_alarm_check_tim;  //断电报警检测时间
     u16 power_alarm_chr_tim;  //断电报警最小充电时间
     
-    u16 turn_angle; // 拐点补传角度  wFlexInitAng
+    u16 turn_angle; // 拐点补传角度
     u8 gps_type;
     u16 power_alarm_acc_tim;  //断电报警ACC跳变检测时间
     u16 reserved_u16_3;
@@ -220,17 +222,18 @@ typedef struct
     Jt808LoginStruct login;
     u8 shock_alarm_count;   //震动报警判断次数
     u8 map_url[51];
-    u8 reserved_u8_12[9];
+    u8 nmea_output_interval; //NMEA语句数据间隔
+    u8 reserved_u8_12[8];
     
     u8 led_ctrl_mode; // 0xA5:灭灯模式LED_MOD_ALL_OFF  其它:正常灯模式 LED_MOD_NORMAL
     u16 language;  // 语言  无报警中文:0x00 0x01    无报警英文:0x00 0x02
     u8 angle_view_time;  //安装方向显示时间 默认10分钟 0xFF一直显示
-    u8 reserved_u8_13;
+    u8 nwscanmode;//4G网络扫描
 
     u8 shake_level;
     u8 shake_time;
     u8 shake_cnt;
-    u8 sf_switch;  //是否关闭防漂移, 0x00打开   ,0x55 关闭
+    u8 relay_limit_number;  //是否限制断油电号码
     u8 shake_durn_tim;
     u16 sleep_tim;   // 睡眠时间 min
     u8 shake_interval;  //震动检测间隔时间
@@ -257,9 +260,9 @@ typedef struct
     u16 gps_not_fix_time;
 
     u16 acc_check_interval;  //ACC错误检测时间最小 10分钟,最大24小时
-    u16 reserved_u16_5;
-    u16 reserved_u16_6;
-    u16 reserved_u16_7;
+    u16 upload_time_bkp;     //上传时间备份
+    u16 gpm_interval;
+    u16 signal_send_interval; //GPS GSM信号值上传间隔
     u16 reserved_u16_8;
     u16 reserved_u16_9;
     u16 reserved_u16_10;
@@ -335,7 +338,7 @@ static u32 goome_file_param_main_write(void)
     s_Para2->para_write_total++;
     
     s_Para->len = sizeof(GprsParaFileType);
-    s_Para->crc = applied_math_calc_common_crc16((u8*)&s_Para->magic, sizeof(GprsParaFileType)-8);  // 968
+    s_Para->crc = applied_math_calc_common_crc16((u8*)&s_Para->magic, sizeof(GprsParaFileType)-8);
     
     
     ret = GM_FS_Write(handle, (void *)s_Para, sizeof(GprsParaFileType), &fs_len);
@@ -887,7 +890,7 @@ GM_ERRCODE config_service_read_from_local(void)
 	//有些新参数在旧设备上没有,要先设置为默认参数,从文件读取后再覆盖
     config_service_set_deault();
     read_nvram_device_type();
-    config_service_set_device((ConfigDeviceTypeEnum)s_nvram->DeviceType);
+    config_service_set_device((ConfigDeviceTypeEnum)s_nvram->DeviceType,false);
 
 	read_param_from_file();
     if(UOP_PARA_ERR != s_Para->is_valid && check_para_ok(s_Para))
@@ -933,14 +936,17 @@ static void config_service_set_factory_deault(void)
 
     value_u16 = CONFIG_UPLOAD_TIME_DEFAULT;
     config_service_set(CFG_UPLOADTIME, TYPE_SHORT, &value_u16, sizeof(value_u16));
+
+    value_u16 = 0;
+    config_service_set(CFG_UPLOADTIME_BKP, TYPE_SHORT, &value_u16, sizeof(value_u16));
     
     // 两点间距判断
     value_u16 = 20;
     config_service_set(CFG_DISTANCE_FOR_LOW_SPEED, TYPE_SHORT, &value_u16, sizeof(value_u16));
 
-	//防漂移功能默认打开
+	//是否限制非中心号码断油电操作
     value_u8 = false;   
-    config_service_set(CFG_CLOSE_DRIFT_DETECT, TYPE_BOOL, &value_u8, sizeof(value_u8));
+    config_service_set(CFG_LIMIT_RELAY_NUMBER, TYPE_BOOL, &value_u8, sizeof(value_u8));
 
 
     value_u8 = false;
@@ -998,8 +1004,11 @@ static void config_service_set_factory_deault(void)
 	value_u8 = false;
     config_service_set(CFG_IS_MOVEALARM_ENABLE, TYPE_BOOL, &value_u8, sizeof(value_u8));
 
-	value_u8 = 2;
+	value_u8 = 0;
     config_service_set(CFG_SMOOTH_TRACK, TYPE_BYTE, &value_u8, sizeof(value_u8));
+
+	value_u8 = 0;
+    config_service_set(CFG_WORKMODE, TYPE_BYTE, &value_u8, sizeof(value_u8));
 
 	value_u8 = false;
     config_service_set(CFG_IS_ACLRALARM_ENABLE, TYPE_BOOL, &value_u8, sizeof(value_u8));
@@ -1139,6 +1148,27 @@ static void config_service_set_factory_deault(void)
     config_service_set(CFG_CUSTOM_CODE, TYPE_STRING,UPDATE_OEM_CODE, GM_strlen(UPDATE_OEM_CODE));
     config_service_set(CFG_TERM_MODEL, TYPE_STRING, UPDATE_DEVICE_CODE, GM_strlen(UPDATE_DEVICE_CODE));
     config_service_set(CFG_TERM_BOOT_CHECK, TYPE_STRING,UPDATE_BOOT_CODE, GM_strlen(UPDATE_BOOT_CODE));
+
+	value_u8 = 0;
+	config_service_set(CFG_VOICE_ENERGY, TYPE_BYTE, &value_u8, sizeof(value_u8));
+
+	value_u8 = 1;
+    config_service_set(CFG_BATTUPLOAD_DISABLE, TYPE_BYTE, &value_u8, sizeof(value_u8));
+
+    value_u8 = TEMP_MF52;
+	config_service_set(CFG_TEMP_SENSOR, TYPE_BYTE, &value_u8, sizeof(value_u8));
+
+	value_u8 = KEY_NONE;
+	config_service_set(CFG_KEY_FEATURE, TYPE_BYTE, &value_u8, sizeof(value_u8));
+
+    value_u16 = 0;
+    config_service_set(CFG_GPM_INTERVAL,TYPE_SHORT,&value_u16,sizeof(value_u16));
+
+	value_u8 = 0;
+    config_service_set(CFG_4G_NWSCAN,TYPE_BYTE,&value_u8,sizeof(value_u8));
+
+	value_u16 = 0;
+    config_service_set(CFG_SIGNAL_INTERVAL,TYPE_SHORT,&value_u16,sizeof(value_u16));
 }
 
 
@@ -1189,7 +1219,7 @@ static void config_service_set_deault(void)
 设置当前设备型号
 并根据设备型号设置相关默认配置
 */
-void config_service_set_device(ConfigDeviceTypeEnum type)
+void config_service_set_device(ConfigDeviceTypeEnum type ,bool setServer)
 {
     u8 value_u8;
     u16 value_u16;
@@ -1204,6 +1234,18 @@ void config_service_set_device(ConfigDeviceTypeEnum type)
     }
     
     config_service_set(CFG_DEVICETYPE, TYPE_SHORT, &value_u16, sizeof(value_u16));
+
+	//斯沃德定制型号，默认平台为a.whatsgps.com:6801。如果原来是谷米平台才做修改，是其它平台不做修改，否则恢复出厂设置会恢复掉平台和协议
+	if ((type == DEVICE_GS03C ||type == DEVICE_GS03D ||type == DEVICE_GS05C ||type == DEVICE_GS05D) && setServer)
+	{
+		config_service_set(CFG_SERVERADDR, TYPE_STRING, CONFIG_SEEWORLD_SERVER_ADDERSS, GM_strlen(CONFIG_SEEWORLD_SERVER_ADDERSS));
+		
+		value_u8 = (u8)PROTOCOL_CONCOX;
+		config_service_set(CFG_PROTOCOL, TYPE_BYTE, &value_u8, sizeof(value_u8));
+
+		value_u8 = (u8)PROTOCOL_VER_GT06;
+		config_service_set(CFG_PROTOCOL_VER, TYPE_BYTE, &value_u8, sizeof(value_u8));
+	}
 
     value_u8 = false;
 	config_service_set(CFG_GPS_CLOSE, TYPE_BOOL, &value_u8, sizeof(value_u8));
@@ -1258,6 +1300,7 @@ void config_service_set_device(ConfigDeviceTypeEnum type)
     switch(type)
     {
         case DEVICE_GS03A:
+		case DEVICE_GS03D:
         case DEVICE_GM06E:
         case DEVICE_AS03A:
             value_u8 = false;
@@ -1276,6 +1319,7 @@ void config_service_set_device(ConfigDeviceTypeEnum type)
             
         case DEVICE_GS03B:
         case DEVICE_AS03B:
+		case DEVICE_GS03C:
             value_u8 = false;
             config_service_set(CFG_IS_90V_POWER, TYPE_BOOL, &value_u8, sizeof(value_u8));
             value_u8 = 1;
@@ -1317,6 +1361,7 @@ void config_service_set_device(ConfigDeviceTypeEnum type)
             break;
 
         case DEVICE_GS05A:
+		case DEVICE_GS05D:
             value_u8 = true;
             config_service_set(CFG_APP_BATTERT_MGR, TYPE_BOOL, &value_u8, sizeof(value_u8));
             value_u8 = true;
@@ -1324,6 +1369,7 @@ void config_service_set_device(ConfigDeviceTypeEnum type)
             break;
 
         case DEVICE_GS05B:
+		case DEVICE_GS05C:
             value_u8 = 1;
             config_service_set(CFG_LOWBATTALM_DISABLE, TYPE_BYTE, &value_u8, sizeof(value_u8));
             value_u8 = true;
@@ -1371,6 +1417,57 @@ void config_service_set_device(ConfigDeviceTypeEnum type)
             value_u8 = true;
             config_service_set(CFG_IS_UART_9600, TYPE_BOOL, &value_u8, sizeof(value_u8));
             break;
+
+        case DEVICE_B1:
+        case DEVICE_B3:
+        	value_u8 = 1;
+            config_service_set(CFG_LOWBATTALM_DISABLE, TYPE_BYTE, &value_u8, sizeof(value_u8));
+			value_u8 = false;
+            config_service_set(CFG_IS_RELAY_ENABLE, TYPE_BOOL, &value_u8, sizeof(value_u8));
+            value_u8 = true;
+            config_service_set(CFG_APP_BATTERT_MGR, TYPE_BOOL, &value_u8, sizeof(value_u8));
+            value_u8 = true;
+            config_service_set(CFG_IS_MANUAL_DEFENCE, TYPE_BOOL, &value_u8, sizeof(value_u8));
+            value_u8 = 0;
+            config_service_set(CFG_SEN_ANGLE_SHOW_TIME, TYPE_BYTE, &value_u8, sizeof(value_u8));
+        	break;
+        	
+        case DEVICE_B5:
+        case DEVICE_B7:
+        	value_u8 = false;
+            config_service_set(CFG_IS_RELAY_ENABLE, TYPE_BOOL, &value_u8, sizeof(value_u8));
+            value_u8 = true;
+            config_service_set(CFG_APP_BATTERT_MGR, TYPE_BOOL, &value_u8, sizeof(value_u8));
+            value_u8 = true;
+            config_service_set(CFG_IS_MANUAL_DEFENCE, TYPE_BOOL, &value_u8, sizeof(value_u8));
+            value_u8 = 0;
+            config_service_set(CFG_SEN_ANGLE_SHOW_TIME, TYPE_BYTE, &value_u8, sizeof(value_u8));
+            break;
+            
+        case DEVICE_W1:
+        case DEVICE_W3:
+        case DEVICE_W7:
+        case DEVICE_W12:
+        case DEVICE_W18:
+        	value_u8 = false;
+            config_service_set(CFG_IS_RELAY_ENABLE, TYPE_BOOL, &value_u8, sizeof(value_u8));
+            value_u8 = true;
+            config_service_set(CFG_APP_BATTERT_MGR, TYPE_BOOL, &value_u8, sizeof(value_u8));
+            value_u8 = true;
+            config_service_set(CFG_IS_MANUAL_DEFENCE, TYPE_BOOL, &value_u8, sizeof(value_u8));
+            value_u8 = 1;
+            config_service_set(CFG_BATTUPLOAD_DISABLE, TYPE_BYTE, &value_u8, sizeof(value_u8));
+            value_u8 = 0;
+            config_service_set(CFG_SEN_ANGLE_SHOW_TIME, TYPE_BYTE, &value_u8, sizeof(value_u8));
+            break;
+
+        case DEVICE_GS06:
+        case DEVICE_GS08:
+            value_u8 = true;
+            config_service_set(CFG_APP_BATTERT_MGR, TYPE_BOOL, &value_u8, sizeof(value_u8));
+            value_u8 = false;
+            config_service_set(CFG_IS_90V_POWER, TYPE_BOOL, &value_u8, sizeof(value_u8));
+            break;
                     
         //case DEVICE_GS07A:
         //case DEVICE_AS07A:
@@ -1391,7 +1488,7 @@ void config_service_restore_factory_config(bool is_all)
         config_service_set_factory_deault();
     }
     
-    config_service_set_device((ConfigDeviceTypeEnum)s_nvram->DeviceType);
+    config_service_set_device((ConfigDeviceTypeEnum)s_nvram->DeviceType,is_all);
     config_service_save_to_local();
 }
 
@@ -1438,10 +1535,10 @@ bool config_service_is_default_imei(void)
 	gsm_get_imei(imei);
     if (0 == GM_strcmp((const char *)imei, (const char *)GOOME_IMEI_DEFAULT))
     {
-        LOG(INFO,"clock(%d) config_service_is_default_imei(%s) = true.", util_clock(), imei);
+        //LOG(INFO,"clock(%d) config_service_is_default_imei(%s) = true.", util_clock(), imei);
         return true;
     }
-	LOG(INFO,"clock(%d) config_service_is_default_imei(%s) = false.", util_clock(), imei);
+	//LOG(INFO,"clock(%d) config_service_is_default_imei(%s) = false.", util_clock(), imei);
     return false;
 }
 
@@ -1534,6 +1631,9 @@ static void convert_cfg_to_para(GprsParaFileType *para)
     config_service_get(CFG_UPLOADTIME, TYPE_SHORT, &value_u16, sizeof(value_u16));
     para->upload_time = value_u16;
 
+    config_service_get(CFG_UPLOADTIME_BKP, TYPE_SHORT, &value_u16, sizeof(value_u16));
+    para->upload_time_bkp = value_u16;
+
     // 心跳间隔
     config_service_get(CFG_HEART_INTERVAL, TYPE_SHORT, &value_u16, sizeof(value_u16));
     para->heart_interval = value_u16;
@@ -1558,11 +1658,7 @@ static void convert_cfg_to_para(GprsParaFileType *para)
 
     config_service_get(CFG_SPEED_CHECK_TIME, TYPE_BYTE, &value_u8, sizeof(value_u8));
     para->speed_detect_time = value_u8;
-
-    para->reserved_u8_3 = 0;
-    para->reserved_u8_4 = 0;
-
-
+   // para->reserved_u8_4 = 0;
 
     config_service_get(CFG_IS_MANUAL_DEFENCE, TYPE_BOOL, &value_u8, sizeof(value_u8));
     if (value_u8)
@@ -1800,8 +1896,9 @@ static void convert_cfg_to_para(GprsParaFileType *para)
     
     config_service_get(CFG_SMOOTH_TRACK, TYPE_BYTE, &value_u8, sizeof(value_u8));
     para->filter_mode = value_u8;
-	
-    para->reserved_u8_7  = 0;
+
+	config_service_get(CFG_WORKMODE, TYPE_BYTE, &value_u8, sizeof(value_u8));
+    para->work_mode = value_u8;
 
     para->reserved_u8_8     = 12;
 
@@ -1866,8 +1963,6 @@ static void convert_cfg_to_para(GprsParaFileType *para)
     config_service_get(CFG_SEN_ANGLE_SHOW_TIME, TYPE_BYTE, &value_u8, sizeof(value_u8));
     para->angle_view_time = value_u8;
 
-    para->reserved_u8_13        = 0; 
-
 	config_service_get(CFG_SHAKE_LEVEL, TYPE_BYTE, &value_u8, sizeof(value_u8));
     para->shake_level = value_u8;
 
@@ -1877,8 +1972,8 @@ static void convert_cfg_to_para(GprsParaFileType *para)
     config_service_get(CFG_AWAKE_COUNT, TYPE_BYTE, &value_u8, sizeof(value_u8));
     para->shake_cnt = value_u8;
 
-    config_service_get(CFG_CLOSE_DRIFT_DETECT, TYPE_BOOL, &value_u8, sizeof(value_u8));
-    para->sf_switch = value_u8;
+    config_service_get(CFG_LIMIT_RELAY_NUMBER, TYPE_BOOL, &value_u8, sizeof(value_u8));
+    para->relay_limit_number = value_u8;
 
     para->shake_durn_tim = 1;
 
@@ -1966,6 +2061,24 @@ static void convert_cfg_to_para(GprsParaFileType *para)
 
 	config_service_get(CFG_SEN_RUN, TYPE_FLOAT, &value_float, sizeof(value_float));
     para->sensor_threshold[THRESHOLD_INDEX_FOR_RUN] = value_float;
+
+	config_service_get(CFG_VOICE_ENERGY, TYPE_BYTE, &value_u8, sizeof(value_u8));
+    para->voice_energy = value_u8;
+
+	config_service_get(CFG_TEMP_SENSOR, TYPE_BYTE, &value_u8, sizeof(value_u8));
+    para->temp_sensor_type = value_u8;
+
+	config_service_get(CFG_KEY_FEATURE, TYPE_BYTE, &value_u8, sizeof(value_u8));
+    para->key_feature = value_u8;
+
+    config_service_get(CFG_GPM_INTERVAL,TYPE_SHORT,&value_u16,sizeof(value_u16));
+    para->gpm_interval = value_u16;
+
+    config_service_get(CFG_4G_NWSCAN,TYPE_BYTE,&value_u8,sizeof(value_u8));
+    para->nwscanmode = value_u8;
+
+    config_service_get(CFG_SIGNAL_INTERVAL,TYPE_SHORT,&value_u16,sizeof(value_u16));
+    para->signal_send_interval = value_u16;
 }
 
 
@@ -1999,10 +2112,10 @@ static void convert_para_to_cfg(const GprsParaFileType *para)
 
     //以下服务器用默认值，所以不用存储的内容更新
     GM_snprintf((char*)value_str,sizeof(value_str), "%s:%d",(char*)para->sock[SOCKET_INDEX_AGPS].src_dns.dns, para->sock[SOCKET_INDEX_AGPS].src_dns.port);
-	//config_service_set(CFG_AGPSSERVERADDR, TYPE_STRING, &value_str, GM_strlen((char*)value_str));
+	config_service_set(CFG_AGPSSERVERADDR, TYPE_STRING, &value_str, GM_strlen((char*)value_str));
 
     GM_snprintf((char*)value_str,sizeof(value_str), "%s:%d",(char*)para->sock[SOCKET_INDEX_LOG].src_dns.dns, para->sock[SOCKET_INDEX_LOG].src_dns.port);
-	//config_service_set(CFG_LOGSERVERADDR, TYPE_STRING, &value_str, GM_strlen((char*)value_str));
+	config_service_set(CFG_LOGSERVERADDR, TYPE_STRING, &value_str, GM_strlen((char*)value_str));
     
     GM_snprintf((char*)value_str,sizeof(value_str), "%s:%d",(char*)para->sock[SOCKET_INDEX_UPDATE].src_dns.dns, para->sock[SOCKET_INDEX_UPDATE].src_dns.port);
 	//config_service_set(CFG_UPDATESERVERADDR, TYPE_STRING, &value_str, GM_strlen((char*)value_str));
@@ -2019,8 +2132,21 @@ static void convert_para_to_cfg(const GprsParaFileType *para)
     value_u16 = para->jt_location_heart_time;
     config_service_set(CFG_JT_HBINTERVAL, TYPE_SHORT, &value_u16, sizeof(value_u16));
 
-    value_u16 = para->upload_time;
+    if(para->upload_time_bkp != para->upload_time  &&  para->upload_time_bkp > 0)
+    {
+        LOG(INFO,"upload_time_bkp %d",para->upload_time_bkp);
+        value_u16 = para->upload_time_bkp;
+    }
+    else
+    {
+        value_u16 = para->upload_time;
+    }
+
+    //value_u16 = para->upload_time;
     config_service_set(CFG_UPLOADTIME, TYPE_SHORT, &value_u16, sizeof(value_u16));
+
+    value_u16 = para->upload_time_bkp;
+    config_service_set(CFG_UPLOADTIME_BKP, TYPE_SHORT, &value_u16, sizeof(value_u16));
 
     // 心跳间隔
     value_u16 = para->heart_interval;
@@ -2167,6 +2293,10 @@ static void convert_para_to_cfg(const GprsParaFileType *para)
     value_u8 = para->filter_mode;
     config_service_set(CFG_SMOOTH_TRACK, TYPE_BYTE, &value_u8, sizeof(value_u8));
 
+	
+    value_u8 = para->work_mode;
+    config_service_set(CFG_WORKMODE, TYPE_BYTE, &value_u8, sizeof(value_u8));
+
     value_u16 = para->power_alarm_check_tim;
     config_service_set(CFG_POWER_CHECK_TIME, TYPE_SHORT, &value_u16, sizeof(value_u16));
     
@@ -2228,8 +2358,8 @@ static void convert_para_to_cfg(const GprsParaFileType *para)
     value_u8 = para->shake_cnt;
     config_service_set(CFG_AWAKE_COUNT, TYPE_BYTE, &value_u8, sizeof(value_u8));
 
-    value_u8 = para->sf_switch;
-    config_service_set(CFG_CLOSE_DRIFT_DETECT, TYPE_BOOL, &value_u8, sizeof(value_u8));
+    value_u8 = para->relay_limit_number;
+    config_service_set(CFG_LIMIT_RELAY_NUMBER, TYPE_BOOL, &value_u8, sizeof(value_u8));
 
 
     value_u16 = para->sleep_tim;
@@ -2318,7 +2448,24 @@ static void convert_para_to_cfg(const GprsParaFileType *para)
 
     value_float = para->sensor_threshold[THRESHOLD_INDEX_FOR_RUN];
 	config_service_set(CFG_SEN_RUN, TYPE_FLOAT, &value_float, sizeof(value_float));
+	
+	value_u8 = para->voice_energy;
+	config_service_set(CFG_VOICE_ENERGY, TYPE_BYTE, &value_u8, sizeof(value_u8));
 
+	value_u8 = para->temp_sensor_type;
+	config_service_set(CFG_TEMP_SENSOR, TYPE_BYTE, &value_u8, sizeof(value_u8));
+
+	value_u8 = para->key_feature;
+	config_service_set(CFG_KEY_FEATURE, TYPE_BYTE, &value_u8, sizeof(value_u8));
+
+    value_u16= para->gpm_interval;
+    config_service_set(CFG_GPM_INTERVAL,TYPE_SHORT,&value_u16,sizeof(value_u16));
+
+    value_u8= para->nwscanmode;
+    config_service_set(CFG_4G_NWSCAN,TYPE_BYTE,&value_u8,sizeof(value_u8));
+
+	value_u16 = para->signal_send_interval;
+	config_service_set(CFG_SIGNAL_INTERVAL,TYPE_SHORT,&value_u16,sizeof(value_u16));
 }
 
 static bool check_address_para_ok(u8 * param)

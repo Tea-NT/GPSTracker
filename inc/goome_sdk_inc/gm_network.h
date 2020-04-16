@@ -64,6 +64,21 @@ typedef struct
 }gm_cell_info_struct;
 
 
+
+typedef struct
+{
+	bool is_tdd;
+    U16 mcc;  // simCC;  460: 0x1CC 国家代码
+    U16 mnc;  // simNC; 00: 移动 01:  营运商
+    U16 lac;  // wLac; 小区编号Lca     区号262C
+    u32 ci;    // wLci 小区ID     CellId     塔号 EBA
+    U16 earfcn;
+    U8 bsic;
+    U8 srxlev;
+}gm_lte_cell_info_struct;
+
+
+
 #define MAX_PLMN_LEN             6
 
 typedef struct
@@ -129,6 +144,7 @@ extern u32 GM_GetGsmStatus(void); // 获取G网连接状态 CREG
 extern u32 GM_GetCregStatus(u8 *status);
 extern s32 GM_GetBarcode(u8* pdata);
 extern kal_uint8 GM_GetFakeCellFeature (kal_bool *feature);
+extern s32 GM_SetFakeCellFeature(kal_bool feature);
 extern s32 GM_AutoApnCheck(goome_auto_apn_struct *Apn);
 
 #endif

@@ -14,8 +14,10 @@
 #define UPDATE_MAX_PACK   600
 #define UPD_RESERVER_LEN 128
 #define UPDATE_PAKET_MAX_LEN 500   //不能小于等于 UPD_RESERVER_LEN
+#define UPDATE_PAKET_MAX_LEN2 1024   //4G暂时每包1024
 #define UPDATAE_FILE_MAX_SIZE    (UPDATE_MAX_PACK * UPDATE_PAKET_MAX_LEN)
 #define UPDATE_MAX_PACK_ONE_SEND       10 //每次发送包数      //不可超过30，remember fifo size should also modified
+#define UPDATE_MAX_PACK_ONE_SEND2      10 //4G暂时每次一包
 
 /*
 2字节	1字节	2字节	8字节	N字节	1字节	1字节
@@ -75,6 +77,7 @@ typedef struct
     ReportResultEnum result; // 升级结果 
     u8 result_info[50];
     u32 state_sum;   // state file的check sum
+    ProtocolUpdateCmdEnum send_cmd_serial; //AT指令发送时需要等待是否成功，记录发送ID，不同处理方式
 }UpdateFileExtend;
 
 /*
@@ -115,7 +118,7 @@ GM_ERRCODE update_filemod_destroy(void);
  */
 GM_ERRCODE update_filemod_timer_proc(void);
 
-
+void update_filemod_close_ok(void);
 void update_filemod_connection_failed(void);
 void update_filemod_connection_ok(void);
 void update_filemod_close_for_reconnect(void);
@@ -136,6 +139,8 @@ void update_msg_pack_request(u8 *pdata, u16 *idx, u16 len);
 void update_msg_start_data_block_request(SocketType *socket);
 GM_ERRCODE update_msg_send_data_block_request(SocketType *socket);
 GM_ERRCODE update_msg_send_result_to_server(SocketType *socket);
+void update_file_send_result(bool result);
+
 
 #endif
 

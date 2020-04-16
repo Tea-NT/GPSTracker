@@ -11,6 +11,8 @@
 #include "gm_timer.h"
 #include "gps_service.h"
 #include "system_state.h"
+#include "at_command.h"
+#include "hard_ware.h"
 
 #define PROTOCOL_HEADER_AGPS 0x29
 #define PROTOCOL_TAIL_AGPS   0x0D
@@ -44,6 +46,8 @@ typedef struct
 
 	// 请求文件时,数据起始位置
     u32 data_start;   
+
+    ProtocolAGPSEnum send_cmd_serial; //AT指令发送，不同处理
 }SocketTypeAgpsExtend;
 
 static SocketTypeAgpsExtend s_agps_socket_extend = {0,0,0,0};
@@ -333,11 +337,18 @@ GM_ERRCODE agps_service_destroy(void)
 
 static void agps_service_close(void)
 {
-    if(s_agps_socket.id >=0)
-    {
-        GM_SocketClose(s_agps_socket.id);
-        s_agps_socket.id=-1;
-    }
+	if(s_agps_socket.id >=0)
+	{
+		if (hard_ware_is_at_command())
+		{
+			at_command_close_connect(s_agps_socket.access_id);
+		}
+		else 
+		{
+			GM_SocketClose(s_agps_socket.id);
+			s_agps_socket.id=-1;
+		}	
+	}
 }
 
 GM_ERRCODE agps_service_timer_proc(void)
@@ -398,8 +409,9 @@ static bool agps_service_write_to_gps(void)
 
 static void agps_service_init_proc(void)
 {
-    GM_ERRCODE ret;
+    //GM_ERRCODE ret;
     gm_cell_info_struct lbs;
+    gm_lte_cell_info_struct lte_lbs;
     bool write_agps_succ = false;
     u8 IP[4];
 
@@ -428,9 +440,7 @@ static void agps_service_init_proc(void)
     }
     else
     {
-        //得到lbs信息后启动校时
-        ret = gsm_get_cell_info(&lbs);
-        if (GM_SUCCESS!=ret)
+    	if (GM_SUCCESS != gsm_get_cell_info(&lbs) && GM_SUCCESS != gsm_get_lte_cell_info(&lte_lbs))
         {
             return;
         }
@@ -461,18 +471,21 @@ static void agps_service_init_proc(void)
 void agps_service_connection_failed(void)
 {
     agps_service_close();
-    
-    if(s_agps_socket.status_fail_count >= MAX_CONNECT_REPEAT)
+
+    if (!hard_ware_is_at_command())
     {
-        // if excuted get_host transfer to error statu, else get_host.
-        if(s_agps_socket.excuted_get_host || (s_agps_socket.addr[0] == 0))
-        {
-            agps_service_transfer_status(SOCKET_STATUS_DATA_FINISH);
-        }
-        else
-        {
-            agps_service_transfer_status(SOCKET_STATUS_INIT);
-        }
+	    if(s_agps_socket.status_fail_count >= MAX_CONNECT_REPEAT)
+	    {
+	        // if excuted get_host transfer to error statu, else get_host.
+	        if(s_agps_socket.excuted_get_host || (s_agps_socket.addr[0] == 0))
+	        {
+	            agps_service_transfer_status(SOCKET_STATUS_DATA_FINISH);
+	        }
+	        else
+	        {
+	            agps_service_transfer_status(SOCKET_STATUS_INIT);
+	        }
+	    }
     }
     // else do nothing . wait connecting proc to deal.
 }
@@ -498,6 +511,44 @@ static void agps_service_connecting_proc(void)
         }
         
     }
+}
+
+void agps_service_send_result(bool result)
+{
+	if (result)
+	{
+		s_agps_socket.send_time = util_clock();
+		if (s_agps_socket_extend.send_cmd_serial == AGPS_REQ_TIMING)
+		{
+			s_agps_socket_extend.timing = 1;
+		}
+	}
+	else
+	{
+		agps_service_close_for_reconnect();
+	}
+}
+
+
+void agps_service_close_ok(void)
+{
+    s_agps_socket.id=-1;
+	if (s_agps_socket.status == SOCKET_STATUS_CONNECTING)
+	{
+		s_agps_socket.send_time = util_clock();
+		if(s_agps_socket.status_fail_count >= MAX_CONNECT_REPEAT)
+	    {
+	        // if excuted get_host transfer to error statu, else get_host.
+	        if(s_agps_socket.excuted_get_host || (s_agps_socket.addr[0] == 0))
+	        {
+	            agps_service_transfer_status(SOCKET_STATUS_DATA_FINISH);
+	        }
+	        else
+	        {
+	            agps_service_transfer_status(SOCKET_STATUS_INIT);
+	        }
+	    }
+	}
 }
 
 
@@ -598,10 +649,12 @@ static void agps_service_data_finish_proc(void)
 
 static void agps_msg_send_timing(void)
 {
-    u8 buff[100];
+    u8 buff[200];
     u16 len = sizeof(buff);
     u16 idx = 0;  //current place
+    GM_ERRCODE ret;
 
+	GM_memset(buff, 0x00, sizeof(buff));
     agps_msg_pack_head(buff, &idx, len);  //9 bytes
     agps_msg_pack_timing(buff, &idx, len);  //72 bytes
     if((idx + 2) > len)
@@ -611,15 +664,18 @@ static void agps_msg_send_timing(void)
     }
     agps_msg_pack_id_len(buff, AGPS_REQ_TIMING, idx); //2 bytes
     len=idx+2;  // 1byte checksum , 1byte 0xD
-    
-    if(GM_SUCCESS == gm_socket_send(&s_agps_socket, buff, len))
+
+	s_agps_socket_extend.send_cmd_serial = AGPS_REQ_TIMING;
+    ret = gm_socket_send(&s_agps_socket, buff, len);
+    if(GM_SUCCESS == ret)
     {
         s_agps_socket.send_time = util_clock();
         s_agps_socket_extend.timing = 1;
         LOG(DEBUG,"clock(%d) agps_msg_send_timing msglen(%d)", util_clock(), len);
+		//LOG_HEX(buff,len);
         return;
     }
-    else
+    else if (ret != GM_MEM_NOT_ENOUGH)
     {
         agps_service_close_for_reconnect();
     }
@@ -665,6 +721,7 @@ static void agps_msg_pack_timing(u8 *pdata, u16 *idx, u16 len)
     ST_Time current_time;
     u8 zone;
     gm_cell_info_struct lbs;
+    gm_lte_cell_info_struct lte_lbs;
     u16 k = 0;
     u16 cell_num=0;
     u16 lbsidx=0;
@@ -709,54 +766,89 @@ static void agps_msg_pack_timing(u8 *pdata, u16 *idx, u16 len)
     GM_memset(&pdata[(*idx)], 0xFF, 16);
     (*idx) += 16;
 
+ 
     //基站数据
-    pdata[(*idx)++] = 0x00;
-    pdata[(*idx)++] = 0x24;
+	if (GM_SUCCESS == gsm_get_lte_cell_info(&lte_lbs))
+	{
+		//长度
+	    pdata[(*idx)++] = 0x00;
+	    pdata[(*idx)++] = 0x30;
 
-    pdata[(*idx)++] = 0x00;
-    pdata[(*idx)++] = 0xA9;
+		//指令
+	    pdata[(*idx)++] = 0x00;
+		pdata[(*idx)++] = 0xB0;
+		
+		//ret = gsm_get_lte_cell_info(&lte_lbs);
+		cell_num = 0;
+		//  MCC(2B) + MNC(1B) + 基站数(1B)
+		//LOG(ERROR, "gsm_get_lte_cell_info mcc(%d),mnc(%d),lac(%X),ci(%X)", lte_lbs.mcc, lte_lbs.mnc, lte_lbs.lac, lte_lbs.ci);
+	    pdata[(*idx)++] = BHIGH_BYTE(lte_lbs.mcc);  // MCC
+	    pdata[(*idx)++] = BLOW_BYTE(lte_lbs.mcc);
+	    pdata[(*idx)++] = BLOW_BYTE(lte_lbs.mnc); // MNC
+	    pdata[(*idx)++] = cell_num+1;  // 基站数
 
+	    // 主服务基站信息  LAC(2B)+CI(3B)+RSSI(1B)
+	    pdata[(*idx)++] = BHIGH_BYTE(lte_lbs.lac);  // LAC
+	    pdata[(*idx)++] = BLOW_BYTE(lte_lbs.lac);
+	    //4 byte
+	    pdata[(*idx)++] = BHIGH_BYTE(WHIGH_WORD(lte_lbs.ci));  // CELL ID
+	    pdata[(*idx)++] = BLOW_BYTE(WHIGH_WORD(lte_lbs.ci));
+	    pdata[(*idx)++] = BHIGH_BYTE(WLOW_WORD(lte_lbs.ci));
+	    pdata[(*idx)++] = BLOW_BYTE(WLOW_WORD(lte_lbs.ci));
+	    pdata[(*idx)++] = lte_lbs.srxlev;// 信号强度      RSSI
+	    (*idx) = (*idx) + 35; //邻区基站全部补0，每个基站7个字节
+	}
+	else// if (GM_SUCCESS == gsm_get_cell_info(&lbs))
+	{
+		//长度
+	    pdata[(*idx)++] = 0x00;
+	    pdata[(*idx)++] = 0x24;
 
-    ret = gsm_get_cell_info(&lbs);
-    LOG(DEBUG,"clock(%d) agps_msg_pack_timing ret(%d) lbs(%d).", util_clock(), ret, lbs.nbr_cell_num);
-    if (lbs.nbr_cell_num > 5)
-    {
-        cell_num = 5;
+		//指令
+	    pdata[(*idx)++] = 0x00;
+		pdata[(*idx)++] = 0xA9;
+		
+		ret = gsm_get_cell_info(&lbs);
+	    LOG(DEBUG,"clock(%d) agps_msg_pack_timing ret(%d) lbs(%d).", util_clock(), ret, lbs.nbr_cell_num);
+	    if (lbs.nbr_cell_num > 5)
+	    {
+	        cell_num = 5;
+	    }
+	    else
+	    {
+	        cell_num = lbs.nbr_cell_num;
+	    }
+	    
+	    //  MCC(2B) + MNC(1B) + 基站数(1B)
+	    pdata[(*idx)++] = BHIGH_BYTE(lbs.serv_info.mcc);  // MCC
+	    pdata[(*idx)++] = BLOW_BYTE(lbs.serv_info.mcc);
+	    pdata[(*idx)++] = BLOW_BYTE(lbs.serv_info.mnc); // MNC
+	    pdata[(*idx)++] = cell_num+1;  // 基站数
+	    
+	    
+	    // 主服务基站信息  LAC(2B)+CI(3B)+RSSI(1B)
+	    pdata[(*idx)++] = BHIGH_BYTE(lbs.serv_info.lac);  // LAC
+	    pdata[(*idx)++] = BLOW_BYTE(lbs.serv_info.lac);
+	    //4 byte
+	    pdata[(*idx)++] = BHIGH_BYTE(lbs.serv_info.ci);  // CELL ID
+	    pdata[(*idx)++] = BLOW_BYTE(lbs.serv_info.ci);
+	    pdata[(*idx)++] = lbs.serv_info.rxlev;// 信号强度      RSSI
+	    
+	    
+	    // 剩余4个基站 LAC(2B)+CI(3B)+RSSI(1B)
+	    lbsidx = (*idx);
+	    for (k=0; k<cell_num; k++) // 24B
+	    {
+	        pdata[lbsidx++] = BHIGH_BYTE(lbs.nbr_cell_info[k].lac);  // LAC
+	        pdata[lbsidx++] = BLOW_BYTE(lbs.nbr_cell_info[k].lac);
+	        
+	        pdata[lbsidx++] = BHIGH_BYTE(lbs.nbr_cell_info[k].ci);  // CELL ID
+	        pdata[lbsidx++] = BLOW_BYTE(lbs.nbr_cell_info[k].ci);
+	        
+	        pdata[lbsidx++] = lbs.nbr_cell_info[k].rxlev;// 信号强度
+	    }
+	    (*idx) = (*idx) + 25;   // 5个基站空间 每个5字节
     }
-    else
-    {
-        cell_num = lbs.nbr_cell_num;
-    }
-    
-    //  MCC(2B) + MNC(1B) + 基站数(1B)
-    pdata[(*idx)++] = BHIGH_BYTE(lbs.serv_info.mcc);  // MCC
-    pdata[(*idx)++] = BLOW_BYTE(lbs.serv_info.mcc);
-    pdata[(*idx)++] = BLOW_BYTE(lbs.serv_info.mnc); // MNC
-    pdata[(*idx)++] = cell_num+1;  // 基站数
-    
-    
-    // 主服务基站信息  LAC(2B)+CI(3B)+RSSI(1B)
-    pdata[(*idx)++] = BHIGH_BYTE(lbs.serv_info.lac);  // LAC
-    pdata[(*idx)++] = BLOW_BYTE(lbs.serv_info.lac);
-    pdata[(*idx)++] = BHIGH_BYTE(lbs.serv_info.ci);  // CELL ID
-    pdata[(*idx)++] = BLOW_BYTE(lbs.serv_info.ci);
-    pdata[(*idx)++] = lbs.serv_info.rxlev;// 信号强度      RSSI
-    
-    
-    // 剩余4个基站 LAC(2B)+CI(3B)+RSSI(1B)
-    lbsidx = (*idx);
-    for (k=0; k<cell_num; k++) // 24B
-    {
-        pdata[lbsidx++] = BHIGH_BYTE(lbs.nbr_cell_info[k].lac);  // LAC
-        pdata[lbsidx++] = BLOW_BYTE(lbs.nbr_cell_info[k].lac);
-        
-        pdata[lbsidx++] = BHIGH_BYTE(lbs.nbr_cell_info[k].ci);  // CELL ID
-        pdata[lbsidx++] = BLOW_BYTE(lbs.nbr_cell_info[k].ci);
-        
-        pdata[lbsidx++] = lbs.nbr_cell_info[k].rxlev;// 信号强度
-    }
-    
-    (*idx) = (*idx) + 25;   // 5个基站空间 每个5字节
 }
 
 
@@ -1034,6 +1126,7 @@ static void agps_msg_send_get_file(u16 data_len)
     u16 len = sizeof(buff);
     u16 idx = 0;  //current place
     u8 cmd = 0;
+    GM_ERRCODE ret;
 	
     switch(config_service_get_gps_type())
     {
@@ -1060,15 +1153,17 @@ static void agps_msg_send_get_file(u16 data_len)
     }
     agps_msg_pack_id_len(buff, cmd, idx);  //2bytes
     len=idx+2;  // 1byte checksum , 1byte 0xD
-    
-    if(GM_SUCCESS == gm_socket_send(&s_agps_socket, buff, len))
+
+	s_agps_socket_extend.send_cmd_serial = (ProtocolAGPSEnum)cmd;
+    ret = gm_socket_send(&s_agps_socket, buff, len);
+    if(GM_SUCCESS == ret)
     {
         s_agps_socket.send_time = util_clock();
         LOG(DEBUG,"clock(%d) agps_msg_send_get_file cmd(%d) msglen(%d) start(%d) total(%d),get_len(%d)", 
             util_clock(), cmd, len, s_agps_socket_extend.data_start, s_agps_socket_extend.data_len, data_len);
         return;
     }
-    else
+    else if (ret != GM_MEM_NOT_ENOUGH)
     {
         agps_service_close_for_reconnect();
     }

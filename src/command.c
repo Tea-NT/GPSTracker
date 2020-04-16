@@ -43,6 +43,11 @@
 #include "auto_test.h"
 #include "watch_dog.h"
 #include "led.h"
+#include "recorder.h"
+#include "gps.h"
+#include "uart.h"
+#include "at_command.h"
+#include "gm_gprs.h"
 
 #pragma diag_suppress 870 
 
@@ -58,6 +63,7 @@ typedef enum
 	CMD_SERVER,
 	CMD_PROTOCOL,
 	CMD_UPLOAD_TIM,
+	CMD_TRACK_UPLOAD_TIME,
 	CMD_GMT ,
 	CMD_SYSTEM_RESET,
 	CMD_FACTORY_ALL,
@@ -109,6 +115,13 @@ typedef enum
     CMD_PMTK,
     CMD_HARD_REBOOT,
     CMD_SIM,
+    CMD_2929_SET,
+    CMD_WORKMODE,
+    CMD_RECORDVOL,
+    CMD_GPM_INTERVAL,
+    CMD_NWSCAN_MODE,
+    CMD_SIGNAL_INTERVAL,
+    CMD_AT_CMD,
     
 	CMD_CMD_MAX,
 }CommandID;
@@ -119,7 +132,7 @@ typedef struct
     CommandID cmd_id;
 }CommandInfo;
 
-static CommandInfo s_cmd_infos[CMD_CMD_MAX + 1] = 
+static CommandInfo s_cmd_infos[CMD_CMD_MAX + 2] = 
 {
 	{"DEVICETYPE",CMD_DEVICE_TYPE},
    	{"APN",CMD_APN},
@@ -129,6 +142,7 @@ static CommandInfo s_cmd_infos[CMD_CMD_MAX + 1] =
 	{"GMNET",CMD_SERVER},
 	{"PROTOCOL",CMD_PROTOCOL},
 	{"TIMER",CMD_UPLOAD_TIM},
+	{"TEMPTIMER",CMD_TRACK_UPLOAD_TIME},
 	{"GMT",CMD_GMT},
 	{"RESET",CMD_SYSTEM_RESET},
 	{"FACTORYALL",CMD_FACTORY_ALL},
@@ -180,8 +194,56 @@ static CommandInfo s_cmd_infos[CMD_CMD_MAX + 1] =
     {"RESULT",CMD_RESULT},
 	{"PMTK",CMD_PMTK},
 	{"HARDREBOOT",CMD_HARD_REBOOT},
-	{"SIM",CMD_SIM}
+	{"RECORDVOL",CMD_RECORDVOL},
+	{"SIM",CMD_SIM},
+	{"<SPGM" ,CMD_2929_SET},
+    {"<SPBSJ",CMD_2929_SET},
+    {"WORKMODE",CMD_WORKMODE},
+	{"GPM",CMD_GPM_INTERVAL},
+	{"NWSCAN",CMD_NWSCAN_MODE},
+	{"SIGNAL",CMD_SIGNAL_INTERVAL},
+	{"ATCMD",CMD_AT_CMD},
 };
+
+
+typedef enum 
+{
+
+    OLD_CMD_PSW,
+    OLD_SET_LOG_SERVER,
+    OLD_SET_EPO_SERVER,
+
+    OLD_MAX_CMD
+    
+}Old_cmd_enum;
+
+
+enum 
+{
+    NEED_OP_NOONE = 0,
+    NEED_OP_RESET = 1,
+    NEED_OP_END_GPRS = 2,
+    NEED_OP_SAVE_FILE = 3,
+    NEED_OP_CHANGE_DNS = 4,
+    NEED_OP_INVALID
+};
+
+
+
+typedef struct
+{
+    char cmd[5];
+    Old_cmd_enum index; 
+
+}Old_set_cmd_info;
+
+
+Old_set_cmd_info s_old_cmd_info[OLD_MAX_CMD] = {
+    {"*P:",         OLD_CMD_PSW},
+    {"*3L:",         OLD_SET_LOG_SERVER},
+    {"*3E:",         OLD_SET_EPO_SERVER},
+};
+
 
 static CommandID get_cmd_id(const char* cmd_name);
 static const char* set_success_rsp(CommandReceiveFromEnum from);
@@ -193,7 +255,7 @@ static char command_scan(const char* p_command, const char* p_format, ...);
 static CommandID get_cmd_id(const char* cmd_name)
 {
 	U8 index = 0;
-	for (index = 0; index < CMD_CMD_MAX + 1; ++index)
+	for (index = 0; index < CMD_CMD_MAX + 2; ++index)
 	{
 		if (!GM_strcmp(cmd_name, s_cmd_infos[index].cmd_name))
 		{
@@ -380,6 +442,229 @@ static const char* get_vehiclestate_str(U16 lang,CommandReceiveFromEnum from,Veh
 	return is_on_str;
 }
 
+
+void delay_gprs_destory(void)
+{
+    gprs_destroy();
+}
+
+
+void delay_gprs_change_dns(void)
+{
+    gps_service_change_config();
+}
+
+
+
+static u16 old_2929_cmd_response(char* pdata , u16 len)
+{
+	u16 j = 0;
+
+	j += GM_sprintf((char*)&pdata[j], "<GM");
+	j += GM_sprintf((char*)&pdata[j], "*3L:%s",config_service_get_pointer(CFG_LOGSERVERADDR));
+	j += GM_sprintf((char*)&pdata[j], "*3E:%s",config_service_get_pointer(CFG_AGPSSERVERADDR));
+	pdata[j++]='>';
+
+	return j;
+}
+
+
+
+static u8 get_param_context(u8 *in , u8* out)
+{
+    u8 i = 0;
+
+    while(in[i] != '>' && in[i] != '*' && in[i] >= 0x20 && in[i] < 0x7E)
+    {
+        out[i] = in[i];
+
+        i++;
+    }
+
+    return i;
+}
+
+
+
+static u8 get_sub_cmd_id(u8 *pdata) 
+{
+    u8  i = 0;
+
+    char  cmd[100] = {0};
+
+    if(pdata[0] != '*') return 0xFF;
+
+    cmd[0] = '*';
+    
+    get_param_context(&pdata[1],(u8 *)&cmd[1]);
+
+
+    for(i = 0 ; i < OLD_MAX_CMD ; i++)
+    {
+        if(GM_strstr(cmd,s_old_cmd_info[i].cmd)!= NULL)
+        {
+            break;
+        }
+    }
+
+    if(i < OLD_MAX_CMD)
+    {
+         return s_old_cmd_info[i].index;
+    }
+
+   return 0xff;
+}
+
+
+static u8 old_cmd_set_log_server(char *pdata , u16 len)
+{
+    char dns_buf[100] = {0};
+    u32 port;
+    u8 i = 0 , ret = 0;
+
+    i = GM_sscanf(pdata,"%[^:]:%d",dns_buf,&port);
+
+    if(i != 2)
+    {
+        return 0;
+    }
+
+    if(GM_strlen(pdata) < 50)
+    {
+    	LOG(WARN, "old_cmd_set_log_server dns:%s port:%d", dns_buf, port);
+        GM_sprintf(&dns_buf[GM_strlen(dns_buf)],":%d",port);
+        config_service_set(CFG_LOGSERVERADDR,TYPE_STRING,pdata,GM_strlen(dns_buf));
+        ret = NEED_OP_SAVE_FILE;
+    }
+
+    return ret;
+}
+
+
+static u8 old_cmd_set_agps_server(char *pdata , u16 len)
+{
+    char dns_buf[100] = {0};
+    u32 port;
+    u8 i = 0 , ret = 0;
+
+    i = GM_sscanf(pdata,"%[^:]:%d",dns_buf,&port);
+
+    if(i != 2)
+    {
+        return 0;
+    }
+
+    if(GM_strlen(pdata) < 50)
+    {
+    	LOG(WARN, "old_cmd_set_agps_server dns:%s port:%d", dns_buf, port);
+        GM_sprintf(&dns_buf[GM_strlen(dns_buf)],":%d",port);
+        config_service_set(CFG_AGPSSERVERADDR,TYPE_STRING,pdata,GM_strlen(dns_buf));
+        ret = NEED_OP_SAVE_FILE;
+    }
+
+    return ret;
+}
+
+
+
+static u8 old_2929_cmd_set(CommandReceiveFromEnum from , char* input , u16 len)
+{
+    u16 jval = 0,index = 0;
+    u8 option = 0,ret = 0,paramlen = 0,psw = 1;
+    char param[100] = {0};
+
+    while(jval < len)
+    {
+        index = get_sub_cmd_id((u8 *)&input[jval]);
+        if(index >= OLD_MAX_CMD) break;
+        if(!psw) break;
+        jval += GM_strlen(s_old_cmd_info[index].cmd);
+        GM_memset(param,0,100);
+        paramlen = get_param_context((u8 *)&input[jval],(u8 *)param);
+        jval += paramlen;
+
+        switch(index)
+        {
+            case OLD_CMD_PSW:
+            {
+                break;
+            }
+
+            case OLD_SET_LOG_SERVER:
+            {
+                ret = old_cmd_set_log_server(param,paramlen);
+                if(ret != NEED_OP_NOONE)
+                {
+                    option |= (1 << ret);
+
+                    option |= (1 << NEED_OP_CHANGE_DNS);
+                }
+                break;
+            }
+                
+            case OLD_SET_EPO_SERVER:
+            {
+                ret = old_cmd_set_agps_server(param,paramlen);
+                if(ret != NEED_OP_NOONE)
+                {
+                    option |= (1 << ret);
+
+                    option |= (1 << NEED_OP_CHANGE_DNS);
+                }
+                break;
+            }
+        }
+    }
+
+
+    if(option & (1 << NEED_OP_SAVE_FILE))
+    {
+        config_service_save_to_local();
+    }
+
+    if(option & (1 << NEED_OP_END_GPRS))
+    {
+        if(from == COMMAND_GPRS)
+        {
+            GM_StartTimer(GM_TIMER_GPRS_DESTORY_LATER, 3*TIM_GEN_1SECOND, delay_gprs_destory);
+        }
+        else
+        {
+            gps_service_destroy();
+        }
+    }
+    else if(option & (1 << NEED_OP_CHANGE_DNS))
+    {
+        if(from == COMMAND_GPRS)
+        {
+            GM_StartTimer(GM_TIMER_GPRS_DESTORY_LATER, 3*TIM_GEN_1SECOND, delay_gprs_change_dns);
+        }
+        else
+        {
+            gps_service_change_config();
+        }
+    }
+    
+    return option;
+}
+
+void command_set_track_mode_timeout(void)
+{
+    u16 upload_time_bkp = 0;
+    
+    config_service_get(CFG_UPLOADTIME_BKP, TYPE_SHORT, &upload_time_bkp, sizeof(U16));
+
+    if(upload_time_bkp > 0)
+    {
+        config_service_set(CFG_UPLOADTIME, TYPE_SHORT, &upload_time_bkp, sizeof(U16));
+		if (hard_ware_is_device_w())
+		{
+			GPMFUN(recreate)();
+		}
+    }
+}
+
+
 GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16 cmd_len, char* p_rsp, void * pmsg)
 {	
 	char cmd_name[CMD_NAME_MAX_LEN] = {0};
@@ -405,9 +690,9 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 	cmd_len = GM_strlen(p_cmd_content);
 	
 	
-	if (p_cmd_content[cmd_len -1] != '#')
+	if (p_cmd_content[cmd_len -1] != '#' && p_cmd_content[cmd_len -1] != '>')
 	{
-		GM_snprintf(p_rsp,CMD_MAX_LEN,"invalid cmd from %d,len=%d:%s",from,cmd_len,p_cmd_content);
+		GM_snprintf(p_rsp,CMD_MAX_LEN,"Invalid Cmd From %d,Len=%d:%s",from,cmd_len,p_cmd_content);
         GM_MemoryFree(p_cmd_content);
         p_cmd_content = NULL;
 		return GM_PARAM_ERROR;
@@ -424,10 +709,11 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 		{
 			char dev_type_str[16] = {0};
 			ConfigDeviceTypeEnum dev_type_id = DEVICE_MAX;
+			ConfigDeviceTypeEnum new_dev_type_id = DEVICE_MAX;
+			config_service_get(CFG_DEVICETYPE, TYPE_SHORT, &dev_type_id, sizeof(U16));
 			para_num = command_scan((char*)p_cmd_content, "s;s", cmd_name,&dev_type_str);
 			if (para_num == 1)
 			{
-				config_service_get(CFG_DEVICETYPE, TYPE_SHORT, &dev_type_id, sizeof(U16));
 				if (1 == lang && COMMAND_GPRS == from)
 				{
 					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "设备型号:%s", (char*)config_service_get_device_type(dev_type_id));
@@ -440,15 +726,25 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 			else if(para_num == 2)
 			{
 				//设置设备类型
-				dev_type_id = config_service_get_device_type_id(dev_type_str);
-				if (dev_type_id == DEVICE_NONE || dev_type_id >= DEVICE_MAX)
+				new_dev_type_id = config_service_get_device_type_id(dev_type_str);
+				if (new_dev_type_id == DEVICE_NONE || new_dev_type_id >= DEVICE_MAX)
 				{
 					GM_memcpy(p_rsp, set_fail_rsp(from), CMD_MAX_LEN);
 				}
 				else
 				{
-					config_service_set_device((ConfigDeviceTypeEnum)dev_type_id);
+					config_service_set_device((ConfigDeviceTypeEnum)new_dev_type_id,COMMAND_UART == from);
 	                config_service_save_to_local();
+	                if (new_dev_type_id == DEVICE_GS08 && dev_type_id != DEVICE_GS08)
+					{
+						at_command_create();
+						gprs_destroy();
+					}
+					else if (new_dev_type_id != DEVICE_GS08 && dev_type_id == DEVICE_GS08)
+					{
+						at_command_destroy();
+						gprs_destroy();
+					}
 					GM_memcpy(p_rsp, set_success_rsp(from), CMD_MAX_LEN);
 				}
 			}
@@ -461,9 +757,9 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 		
 		case CMD_APN:
 		{	
-			char apn_name[CMD_NAME_MAX_LEN] = {0};
-			char user_name[CMD_NAME_MAX_LEN] = {0};
-			char pass_word[CMD_NAME_MAX_LEN] = {0};
+			char apn_name[GOOME_APN_MAX_LENGTH] = {0};
+			char user_name[GOOME_APN_MAX_LENGTH] = {0};
+			char pass_word[GOOME_APN_MAX_LENGTH] = {0};
 			
             para_num = command_scan((char*)p_cmd_content, "s;sss", cmd_name,apn_name,user_name,pass_word);
 
@@ -475,10 +771,10 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 				}
 				else
 				{
-					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "APN name:%s,user:%s,passpord:%s", (char*)config_service_get_pointer(CFG_APN_NAME),(char*)config_service_get_pointer(CFG_APN_USER),(char*)config_service_get_pointer(CFG_APN_PWD));
+					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "APN:%s,%s,%s", (char*)config_service_get_pointer(CFG_APN_NAME),(char*)config_service_get_pointer(CFG_APN_USER),(char*)config_service_get_pointer(CFG_APN_PWD));
 				}
 			}
-			else if(para_num == 2)
+			else if (para_num >= 2 && para_num <= 4)
 			{
 				//设置APN
 				if(0 == GM_strlen(apn_name))
@@ -488,45 +784,20 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 				else
 				{
 					config_service_set(CFG_APN_NAME, TYPE_STRING, apn_name, GM_strlen(apn_name));
-					config_service_save_to_local();
-					GM_memcpy(p_rsp, set_success_rsp(from), CMD_MAX_LEN);
-                    system_state_set_gpss_reboot_reason("cmd apn param2");
-					gprs_destroy();
+					config_service_set(CFG_APN_USER, TYPE_STRING, user_name, GM_strlen(user_name));
+					config_service_set(CFG_APN_PWD, TYPE_STRING, pass_word, GM_strlen(pass_word));
+					if(GM_SUCCESS != config_service_save_to_local())
+					{	
+						GM_memcpy(p_rsp, set_fail_rsp(from), CMD_MAX_LEN);
+					}
+					else
+					{
+						GM_memcpy(p_rsp, set_success_rsp(from), CMD_MAX_LEN);
+	                    system_state_set_gpss_reboot_reason("cmd apn param3");
+						gprs_destroy();
+					}
 				}
 			
-			}
-			else if(para_num == 3)
-			{
-				//设置APN
-				config_service_set(CFG_APN_NAME, TYPE_STRING, apn_name, GM_strlen(apn_name));
-				config_service_set(CFG_APN_USER, TYPE_STRING, user_name, GM_strlen(user_name));
-				if(GM_SUCCESS != config_service_save_to_local())
-				{	
-					GM_memcpy(p_rsp, set_fail_rsp(from), CMD_MAX_LEN);
-				}
-				else
-				{
-					GM_memcpy(p_rsp, set_success_rsp(from), CMD_MAX_LEN);
-                    system_state_set_gpss_reboot_reason("cmd apn param3");
-					gprs_destroy();
-				}
-			}
-			else if(para_num == 4)
-			{
-				//设置APN
-				config_service_set(CFG_APN_NAME, TYPE_STRING, apn_name, GM_strlen(apn_name));
-				config_service_set(CFG_APN_USER, TYPE_STRING, user_name, GM_strlen(user_name));
-				config_service_set(CFG_APN_PWD, TYPE_STRING, pass_word, GM_strlen(pass_word));
-				if(GM_SUCCESS != config_service_save_to_local())
-				{	
-					GM_memcpy(p_rsp, set_fail_rsp(from), CMD_MAX_LEN);
-				}
-				else
-				{
-					GM_memcpy(p_rsp, set_success_rsp(from), CMD_MAX_LEN);
-                    system_state_set_gpss_reboot_reason("cmd apn param4");
-					gprs_destroy();
-				}	
 			}
 			else
 			{
@@ -633,13 +904,13 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Server:%s", (char*)config_service_get_pointer(CFG_SERVERADDR));
 				}
 			}
-			else if(para_num == 3 || para_num == 4)
+			else if (para_num == 3 || para_num == 4)
 			{
 				//设置
 				bool is_lock_ip = true;
 				char server_addr[64] = {0};
 				config_service_get(CFG_SERVERLOCK, TYPE_BYTE, &is_lock_ip, sizeof(is_lock_ip));
-				if (is_lock_ip)
+				if (is_lock_ip && !hard_ware_device_unlock_ip())
 				{
 					GM_memcpy(p_rsp, set_fail_rsp(from), CMD_MAX_LEN);
 					break;
@@ -682,7 +953,7 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 				}
 				else
 				{
-					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Protocol:%s,protocol version:%d", get_protocol_str(lang,from,protocol_type),protocol_ver);
+					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Protocol:%s,Protocol Version:%d", get_protocol_str(lang,from,protocol_type),protocol_ver);
 				}
 			}
 			else if(para_num == 2)
@@ -721,33 +992,137 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 		
 		case CMD_UPLOAD_TIM:
 		{
-			U16 upload_time = 0;
+			U16 upload_time,upload_time_bkp;
 			para_num = command_scan((char*)p_cmd_content, "s;i", cmd_name,&upload_time);
 			if (para_num == 1)
 			{
-				config_service_get(CFG_UPLOADTIME, TYPE_SHORT, &upload_time, sizeof(upload_time));
+				config_service_get(CFG_UPLOADTIME_BKP, TYPE_SHORT, &upload_time_bkp, sizeof(upload_time_bkp));
+                config_service_get(CFG_UPLOADTIME, TYPE_SHORT, &upload_time, sizeof(upload_time));
+                if (upload_time_bkp != 0 && upload_time_bkp != upload_time)
+				{
+					upload_time = upload_time_bkp;
+                }
+                
 				if (1 == lang && COMMAND_GPRS == from)
 				{	
 					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "上传间隔:%d秒", upload_time);
 				}
 				else
 				{
-					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Upload interval:%d seconds", upload_time);
+					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Upload Interval:%d Seconds", upload_time);
 				}
 			}
 			else if(para_num == 2)
 			{
 				//设置
-				if(upload_time < CONFIG_UPLOAD_TIME_MIN || upload_time > CONFIG_UPLOAD_TIME_MAX)
+				if(upload_time > CONFIG_UPLOAD_TIME_MAX)
 				{	
 					GM_memcpy(p_rsp, set_fail_rsp(from), CMD_MAX_LEN);
 				}
 				else
 				{
+					u16 cur_upload_time = 0;
+					config_service_get(CFG_UPLOADTIME, TYPE_SHORT, &cur_upload_time, sizeof(U16));
 					config_service_set(CFG_UPLOADTIME, TYPE_SHORT, &upload_time, sizeof(U16));
+                    config_service_set(CFG_UPLOADTIME_BKP, TYPE_SHORT, &upload_time, sizeof(U16));
+					if (cur_upload_time != upload_time)
+					{
+						if(upload_time == 0)
+						{
+							bool gps_close = true;
+							config_service_set(CFG_GPS_CLOSE,TYPE_BOOL,&gps_close,sizeof(gps_close));
+							enter_sleep_mode();
+						}
+						else
+						{
+							bool gps_close = false;
+							config_service_set(CFG_GPS_CLOSE,TYPE_BOOL,&gps_close,sizeof(gps_close));
+							if (cur_upload_time == 0)
+							{
+								exit_sleep_mode();
+							}
+							else if (hard_ware_is_device_w())
+							{
+								GPMFUN(recreate)();
+							}
+						}
+					}
 					config_service_save_to_local();
 					GM_memcpy(p_rsp, set_success_rsp(from), CMD_MAX_LEN);
 				}
+			}
+			else
+			{
+				GM_memcpy(p_rsp, set_fail_rsp(from), CMD_MAX_LEN);
+			}
+		}
+		break;
+		
+		case CMD_TRACK_UPLOAD_TIME:
+		{
+			S16 tmp_upload_time = 0;
+            U16 upload_time_bkp = 0;
+            u16 upload_time_normal = 0;
+			para_num = command_scan((char*)p_cmd_content, "s;i", cmd_name,&tmp_upload_time);
+			if (para_num == 1)
+			{
+				if (1 == lang && COMMAND_GPRS == from)
+				{	
+					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "追踪上传间隔:%d秒", system_state_get_track_upload_time());
+				}
+				else
+				{
+					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Upload Interval When Tracking:%d Seconds", system_state_get_track_upload_time());
+				}
+			}
+			else if(para_num == 2)
+			{
+                if(system_state_get_work_state() != GM_SYSTEM_STATE_SLEEP)
+                {
+                    //设置
+                    config_service_get(CFG_UPLOADTIME, TYPE_SHORT, &upload_time_normal, sizeof(U16));
+    				if(upload_time_normal == 0 || tmp_upload_time < 0 || tmp_upload_time > CONFIG_UPLOAD_TIME_MAX || upload_time_normal < tmp_upload_time)
+    				{	
+    					GM_memcpy(p_rsp, set_fail_rsp(from), CMD_MAX_LEN);
+    				}
+    				else
+    				{
+                        GM_StopTimer(GM_TIMER_TRACK);
+                        
+    					system_state_set_track_upload_time(tmp_upload_time);
+
+                        if(tmp_upload_time != 0)
+                        {
+                            config_service_get(CFG_UPLOADTIME_BKP, TYPE_SHORT, &upload_time_bkp, sizeof(U16));
+
+                            if(upload_time_bkp == 0)
+                            {
+                                config_service_get(CFG_UPLOADTIME, TYPE_SHORT, &upload_time_bkp, sizeof(U16));
+                                config_service_set(CFG_UPLOADTIME_BKP, TYPE_SHORT, &upload_time_bkp, sizeof(U16));
+                            }
+                            config_service_set(CFG_UPLOADTIME, TYPE_SHORT, &tmp_upload_time, sizeof(U16));
+                            GM_StartTimer(GM_TIMER_TRACK,180 * TIM_GEN_1SECOND, command_set_track_mode_timeout);
+                        }
+                        else
+                        {
+                            config_service_get(CFG_UPLOADTIME_BKP, TYPE_SHORT, &upload_time_bkp, sizeof(U16));
+                            if(upload_time_bkp > 0)
+                            {
+                                config_service_set(CFG_UPLOADTIME, TYPE_SHORT, &upload_time_bkp, sizeof(U16));
+                            }
+                        }
+                        if (hard_ware_is_device_w())
+                        {
+                        	GPMFUN(recreate)();
+                        }
+    					GM_memcpy(p_rsp, set_success_rsp(from), CMD_MAX_LEN);
+    				}
+                }
+                else
+                {
+                    GM_snprintf(p_rsp,CMD_MAX_LEN,"System sleep,Cannot trigger track mode\r\n%s",set_success_rsp(from));  
+                }
+				
 			}
 			else
 			{
@@ -821,7 +1196,7 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 				}
 				else
 				{
-					GM_memcpy(p_rsp, "System is restaring", CMD_MAX_LEN);
+					GM_memcpy(p_rsp, "System is restarting", CMD_MAX_LEN);
 				}
 			}
 			else
@@ -902,12 +1277,40 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 		{
 			U16 lang = 0;
 			bool is_on = true;
+			gm_sms_new_msg_struct* p_sms =(gm_sms_new_msg_struct*)pmsg;
+			bool is_limit_num = false;
+
+			if (false == hard_ware_device_has_relay())
+			{
+				GM_memcpy(p_rsp, set_fail_rsp_en, GM_strlen(set_fail_rsp_en));
+				break;
+			}
+			
+			config_service_get(CFG_LIMIT_RELAY_NUMBER, TYPE_BOOL, &is_limit_num, sizeof(u8));
 			config_service_get(CFG_LANGUAGE, TYPE_SHORT, &lang, sizeof(lang));
 			para_num = command_scan((char*)p_cmd_content, "s;w", cmd_name,&is_on);
+			if(is_limit_num && CMD_RELAY == cmd_id && para_num == 2 && from == COMMAND_SMS)
+			{
+				char *source_phone = p_sms->asciiNum;//源号码
+				char *center_phone = config_service_get_pointer(CFG_CENTER_NUMBER);//中心号码
+				if (!GM_strstr(source_phone,center_phone))
+				{
+					if (1 == lang && COMMAND_GPRS == from)
+					{
+						GM_snprintf((char*)p_rsp,CMD_MAX_LEN, "无权限执行该操作，请使用中心号码操作");
+					}
+					else
+					{
+						GM_snprintf((char*)p_rsp,CMD_MAX_LEN, "No permission to perform this operation, please use the center number operation.");
+					}
+					break;
+				}
+			}
+				
 			if (para_num == 1)
 			{
 				char is_on_str[10] = {0};
- 				is_on = system_state_get_device_relay_state();
+				is_on = system_state_get_device_relay_state();
 				if (1 == lang && COMMAND_GPRS == from)
 				{	
 					if(is_on)
@@ -936,7 +1339,7 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 			}
 			else if(para_num == 2)
 			{
- 				GM_ERRCODE ret = GM_SUCCESS;
+				GM_ERRCODE ret = GM_SUCCESS;
 				if (is_on)
 				{
 					ret = relay_on(cmd_id == CMD_RELAY);
@@ -1016,39 +1419,37 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 		{
 			U16 lang = 0;
 			bool is_on = true;
+			gm_sms_new_msg_struct* p_sms =(gm_sms_new_msg_struct*)pmsg;
+			bool is_limit_num = false;
+
+			if (false == hard_ware_device_has_relay())
+			{
+				GM_memcpy(p_rsp, set_fail_rsp_en, GM_strlen(set_fail_rsp_en));
+				break;
+			}
 			config_service_get(CFG_LANGUAGE, TYPE_SHORT, &lang, sizeof(lang));
 			para_num = command_scan((char*)p_cmd_content, "s;w", cmd_name,&is_on);
-			if (para_num == 1)
+
+			config_service_get(CFG_LIMIT_RELAY_NUMBER, TYPE_BOOL, &is_limit_num, sizeof(u8));
+			if(is_limit_num && from == COMMAND_SMS)
 			{
-				char is_on_str[10] = {0};
- 				is_on = system_state_get_device_relay_state();
-				if (1 == lang && COMMAND_GPRS == from)
-				{	
-					if(is_on)
-					{
-						GM_strcpy(is_on_str, "已断开");
-					}
-					else
-					{
-						GM_strcpy(is_on_str, "未断开");
-					}
-					GM_snprintf((char*)p_rsp,CMD_MAX_LEN, "油电状态:%s", is_on_str);
-				}
-				else
+				char *source_phone = p_sms->asciiNum;//源号码
+				char *center_phone = config_service_get_pointer(CFG_CENTER_NUMBER);//中心号码
+				if (!GM_strstr(source_phone,center_phone))
 				{
-					if(is_on)
+					if (1 == lang && COMMAND_GPRS == from)
 					{
-						GM_strcpy(is_on_str, "ON");
+						GM_snprintf((char*)p_rsp,CMD_MAX_LEN, "无权限执行该操作，请使用中心号码操作");
 					}
 					else
 					{
-						GM_strcpy(is_on_str, "OFF");
+						GM_snprintf((char*)p_rsp,CMD_MAX_LEN, "No permission to perform this operation, please use the center number operation.");
 					}
-					GM_snprintf((char*)p_rsp,CMD_MAX_LEN, " Relay:%s", is_on_str);
+					break;
 				}
-				
 			}
-			else if(para_num == 2)
+			
+			if(para_num == 1)
 			{
  				GM_ERRCODE ret = GM_SUCCESS;
 				if (! is_on)
@@ -1091,39 +1492,36 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 		{
 			U16 lang = 0;
 			bool is_on = true;
+			gm_sms_new_msg_struct* p_sms =(gm_sms_new_msg_struct*)pmsg;
+			bool is_limit_num = false;
+
+			if (false == hard_ware_device_has_relay())
+			{
+				GM_memcpy(p_rsp, set_fail_rsp_en, GM_strlen(set_fail_rsp_en));
+				break;
+			}
 			config_service_get(CFG_LANGUAGE, TYPE_SHORT, &lang, sizeof(lang));
 			para_num = command_scan((char*)p_cmd_content, "s;w", cmd_name,&is_on);
-			if (para_num == 1)
+			
+			config_service_get(CFG_LIMIT_RELAY_NUMBER, TYPE_BOOL, &is_limit_num, sizeof(u8));
+			if(is_limit_num && from == COMMAND_SMS)
 			{
-				char is_on_str[10] = {0};
- 				is_on = system_state_get_device_relay_state();
-				if (1 == lang && COMMAND_GPRS == from)
-				{	
-					if(is_on)
-					{
-						GM_strcpy(is_on_str, "已断开");
-					}
-					else
-					{
-						GM_strcpy(is_on_str, "未断开");
-					}
-					GM_snprintf((char*)p_rsp,CMD_MAX_LEN, "油电状态:%s", is_on_str);
-				}
-				else
+				char *source_phone = p_sms->asciiNum;//源号码
+				char *center_phone = config_service_get_pointer(CFG_CENTER_NUMBER);//中心号码
+				if (!GM_strstr(source_phone,center_phone))
 				{
-					if(is_on)
+					if (1 == lang && COMMAND_GPRS == from)
 					{
-						GM_strcpy(is_on_str, "ON");
+						GM_snprintf((char*)p_rsp,CMD_MAX_LEN, "无权限执行该操作，请使用中心号码操作");
 					}
 					else
 					{
-						GM_strcpy(is_on_str, "OFF");
+						GM_snprintf((char*)p_rsp,CMD_MAX_LEN, "No permission to perform this operation, please use the center number operation.");
 					}
-					GM_snprintf((char*)p_rsp,CMD_MAX_LEN, " Relay:%s", is_on_str);
+					break;
 				}
-				
 			}
-			else if(para_num == 2)
+			if(para_num == 1)
 			{
  				GM_ERRCODE ret = GM_SUCCESS;
 				if (is_on)
@@ -1186,6 +1584,10 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 			para_num = command_scan((char*)p_cmd_content, "s", cmd_name);
 			if (para_num == 1)
 			{	
+				bool gps_close = false;
+				config_service_set(CFG_GPS_CLOSE,TYPE_BOOL,&gps_close,sizeof(gps_close));
+				config_service_save_to_local();
+				
 				//和用g-sensor唤醒GPS一样的流程
 				gps_power_on(true);
 				g_sensor_reset_noshake_time();
@@ -1194,6 +1596,8 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 				
 				GM_StartTimer(GM_TIMER_10MS_MAIN, TIM_GEN_10MS, timer_10ms_proc);
 				GM_StartTimer(GM_TIMER_1S_MAIN, TIM_GEN_1SECOND, timer_1s_proc);
+				
+				
 			}
 			else
 			{
@@ -1233,12 +1637,14 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 				char server[32] = {0};
 				ConfigProtocolEnum protocol = config_service_get_app_protocol();
 				U8 protocol_ver = 0;
-				U16 upload_time = 0;
+				U16 upload_time = 0,upload_time_bkp = 0;
 				U16 heartbeat_time = 0;
 				
 				config_service_get(CFG_SERVERADDR, TYPE_STRING, server, sizeof(server));
 				config_service_get(CFG_PROTOCOL_VER, TYPE_BYTE, &protocol_ver, sizeof(protocol_ver));
-				config_service_get(CFG_UPLOADTIME, TYPE_SHORT, &upload_time, sizeof(upload_time));
+				config_service_get(CFG_UPLOADTIME_BKP, TYPE_SHORT, &upload_time_bkp, sizeof(upload_time_bkp));
+                config_service_get(CFG_UPLOADTIME, TYPE_SHORT, &upload_time, sizeof(upload_time));
+                if (upload_time_bkp != 0 && upload_time_bkp != upload_time)upload_time = upload_time_bkp;
 				config_service_get(CFG_HEART_INTERVAL, TYPE_SHORT, &heartbeat_time, sizeof(heartbeat_time));
 							
 				if (1 == lang && COMMAND_GPRS == from)
@@ -1247,7 +1653,7 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 				}
 				else
 				{
-					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Server:%s,protocol:%s,protocol version:%d,upload interval:%d seconds,heartbeat interval:%d minutes,APN:%s", server,get_protocol_str(lang,from,protocol),protocol_ver,upload_time,heartbeat_time/SECONDS_PER_MIN,(char*)config_service_get_pointer(CFG_APN_NAME));
+					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Server:%s,Protocol:%s,Protocol version:%d,Upload interval:%d Seconds,Heartbeat interval:%d Minutes,APN:%s", server,get_protocol_str(lang,from,protocol),protocol_ver,upload_time,heartbeat_time/SECONDS_PER_MIN,(char*)config_service_get_pointer(CFG_APN_NAME));
 				}
 			}
 			else
@@ -1333,17 +1739,21 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 			if (para_num == 1)
 			{
 				GPSData gps_data;
+				ST_Time gps_time;
 				bool ret = true;
 				ret = gps_get_last_data(&gps_data);
 				if (true == ret)
 				{
+					util_get_current_local_time(NULL, &gps_time, 0);
 					if (1 == lang && COMMAND_GPRS == from)
 					{
-						GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "纬度:%f,经度:%f,速度:%d公里/小时,方向:%d度", gps_data.lat,gps_data.lng,(U16)gps_data.speed,(U16)gps_data.course);
+						GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "纬度:%f,经度:%f,时间:%02d-%02d-%02d %02d:%02d:%02d,速度:%d公里/小时,方向:%d度", gps_data.lat,gps_data.lng, gps_time.year,gps_time.month,gps_time.day
+						,gps_time.hour,gps_time.minute, gps_time.second, (U16)gps_data.speed,(U16)gps_data.course);
 					}
 					else
 					{
-						GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Latitude:%f,longitude:%f,speed:%d km/h,course:%d", gps_data.lat,gps_data.lng,(U16)gps_data.speed,(U16)gps_data.course);
+						GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Latitude:%f,Longitude:%f,Time:%02d-%02d-%02d %02d:%02d:%02d,Speed:%d km/h,Course:%d", gps_data.lat,gps_data.lng, gps_time.year,gps_time.month,gps_time.day
+						,gps_time.hour,gps_time.minute, gps_time.second, (U16)gps_data.speed,(U16)gps_data.course);
 					}
 				}
 				else
@@ -1380,38 +1790,49 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 				float battery_voltage = 0;
 				bool is_defence_by_hand = false;
 				bool acc_state = false;
+				bool is_90v_power = false;
+				u16 rsp_len = 0;
 				
 				hard_ware_get_power_voltage(&power_voltage);
 				hard_ware_get_internal_battery_voltage(&battery_voltage);
 				hard_ware_get_acc_level(&acc_state);
 				config_service_get(CFG_IS_MANUAL_DEFENCE, TYPE_BOOL, &is_defence_by_hand, sizeof(is_defence_by_hand));
+				config_service_get(CFG_IS_90V_POWER, TYPE_BOOL, &is_90v_power, sizeof(bool));
 				if (1 == lang && COMMAND_GPRS == from)
 				{
-					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "GSM信号强度:%d,GPRS状态:%d(0:掉线,1:上线),GPS:%s,电源电压:%.1fV,电池电压%.1fV,ACC:%d,运动传感器:%s,油电状态:%d(0:未断开,1:已断开),设防模式:%d(0:自动,1:手动),设防状态:%d(0:撤防,1:设防)",
-						gsm_get_csq(),
-						gprs_is_ok(),
-						get_fixstate_str(lang, from, gps_get_state()),
-						power_voltage,
-						battery_voltage,
-						acc_state,
-						get_vehiclestate_str(lang, from, system_state_get_vehicle_state()),
-						system_state_get_device_relay_state(),
-						is_defence_by_hand,
-						system_state_get_defence());
+					rsp_len = GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "GSM信号强度:%d,GPRS状态:%d(0:掉线,1:上线),GPS:%s,电源电压:%.1fV,电池电压%.1fV,ACC:%d,运动传感器:%s,油电状态:%d(0:未断开,1:已断开),设防模式:%d(0:自动,1:手动),设防状态:%d(0:撤防,1:设防)",
+								gsm_get_csq(),
+								gprs_is_ok(),
+								get_fixstate_str(lang, from, gps_get_state()),
+								power_voltage,
+								battery_voltage,
+								acc_state,
+								get_vehiclestate_str(lang, from, system_state_get_vehicle_state()),
+								system_state_get_device_relay_state(),
+								is_defence_by_hand,
+								system_state_get_defence());
+					if (!hard_ware_is_device_w())
+					{
+						rsp_len = GM_snprintf((char*)&p_rsp[rsp_len], CMD_MAX_LEN-rsp_len, ",电压范围:%s",is_90v_power? "9-90V":"9-36V");
+					}
 				}
 				else
 				{
-					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "GSM:%d,GPRS:%d,GPS:%s,voltage:%.1fV,battery:%.1fV,ACC:%d,g_sensor:%s,relay:%d,defence mode:%d,defence state:%d",
-						gsm_get_csq(),
-						gprs_is_ok(),
-						get_fixstate_str(lang, from, gps_get_state()),
-						power_voltage,
-						battery_voltage,
-						acc_state,
-						get_vehiclestate_str(lang, from, system_state_get_vehicle_state()),
-						system_state_get_device_relay_state(),
-						is_defence_by_hand,
-						system_state_get_defence());
+					rsp_len = GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "GSM:%d,GPRS:%d,GPS:%s,Voltage:%.1fV,Battery:%.1fV,ACC:%d,G_sensor:%s,Relay:%d,Defence mode:%d,Defence state:%d",
+								gsm_get_csq(),
+								gprs_is_ok(),
+								get_fixstate_str(lang, from, gps_get_state()),
+								power_voltage,
+								battery_voltage,
+								acc_state,
+								get_vehiclestate_str(lang, from, system_state_get_vehicle_state()),
+								system_state_get_device_relay_state(),
+								is_defence_by_hand,
+								system_state_get_defence());
+					if (!hard_ware_is_device_w())
+					{
+						rsp_len = GM_snprintf((char*)&p_rsp[rsp_len], CMD_MAX_LEN-rsp_len, ",Voltage range:%s",is_90v_power? "9-90V":"9-36V");
+					}
 				}
 			}
 			else
@@ -1438,7 +1859,7 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 				}
 				else
 				{
-					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "LBS:%s,upload interval:%d seconds,wait for GPS %d seconds",get_enable_str(lang,from,is_on),lbs_interval,wait_gps_time);
+					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "LBS:%s,Upload interval:%d seconds,Wait for GPS %d seconds",get_enable_str(lang,from,is_on),lbs_interval,wait_gps_time);
 				}
 			}
 			else if(para_num == 2)
@@ -1583,6 +2004,7 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 				{
 					config_service_set(CFG_HEART_INTERVAL, TYPE_SHORT, &heart_interval, sizeof(heart_interval));
 					config_service_save_to_local();
+					gps_service_set_heart_receive_time(util_clock());
 					GM_memcpy(p_rsp, set_success_rsp(from), CMD_MAX_LEN);			
 				}
 			}
@@ -1652,7 +2074,7 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 				}
 				else
 				{
-					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Speed alarm:%s,check time:%d seconds,speed threshold:%d km/h",get_enable_str(lang, from, is_on),check_time,speed_threshold);
+					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Speed alarm:%s,Check time:%d seconds,Speed threshold:%d km/h",get_enable_str(lang, from, is_on),check_time,speed_threshold);
 				}
 			}
 			else if(para_num == 2)
@@ -1715,7 +2137,7 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 				}
 				else
 				{
-					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Version:%s(%s),kernel:%s,check sum:%4X,device type:%s",VERSION_NUMBER,SW_APP_BUILD_DATE_TIME,kernel_version,system_state_get_bin_checksum(),(char*)config_service_get_device_type(dev_type_id));
+					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Version:%s(%s),Kernel:%s,Check sum:%4X,Device type:%s",VERSION_NUMBER,SW_APP_BUILD_DATE_TIME,kernel_version,system_state_get_bin_checksum(),(char*)config_service_get_device_type(dev_type_id));
 				}
 			}
 			else
@@ -1745,7 +2167,7 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 				}
 				else
 				{
-					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Awake check time:%d seconds,awake check count:%d,shake alarm check time:%d seconds,shake alarm check count:%d",awake_check_time,awake_check_count,shake_check_time,shake_check_count);
+					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Awake check time:%d seconds,Awake check count:%d,Shake alarm check time:%d seconds,Shake alarm check count:%d",awake_check_time,awake_check_count,shake_check_time,shake_check_count);
 				}
 			}
 			else if(para_num == 2)
@@ -1938,7 +2360,7 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 				}
 				else
 				{
-					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "shake alarm check time %d seconds,shake alarm delay %d seconds,report interval %d minutes",shake_check_time,shake_alarm_delay,shake_alarm_interval/SECONDS_PER_MIN);
+					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Shake alarm check time %d seconds,Shake alarm delay %d seconds,Report interval %d minutes",shake_check_time,shake_alarm_delay,shake_alarm_interval/SECONDS_PER_MIN);
 				}
 			}
 			else if(para_num == 2)
@@ -2092,7 +2514,7 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 				}
 				else
 				{
-					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Power off alarm:%s, check time:%d seconds,report power off alarm %d seconds later than power on",get_enable_str(lang, from, is_on),power_alarm_check_time,power_off_alarm_delay);
+					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Power off alarm:%s, Check time:%d seconds,Report power off alarm %d seconds later than power on",get_enable_str(lang, from, is_on),power_alarm_check_time,power_off_alarm_delay);
 				}
 			}
 			else if(para_num == 2)
@@ -2204,7 +2626,7 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 				}
 				else
 				{
-					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Province ID:%d,city ID:%d,OEM ID:%s,protocol type:%d,device ID:%s,license colour:%d,license number:%s",province_id,city_id,oem_id,protocol_type,device_id,license_color,license_number);
+					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Province ID:%d,City ID:%d,OEM ID:%s,Protocol type:%d,Device ID:%s,License colour:%d,License number:%s",province_id,city_id,oem_id,protocol_type,device_id,license_color,license_number);
 				}
 			}
 			else if(para_num == 8)
@@ -2480,7 +2902,7 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 			}
 			else
 			{
-				GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Auto APN:%s,APN name:%s,user:%s,passpord:%s,server:%s",get_enable_str(lang,from,is_on),(char*)config_service_get_pointer(CFG_APN_NAME),(char*)config_service_get_pointer(CFG_APN_USER),(char*)config_service_get_pointer(CFG_APN_PWD),(char*)config_service_get_pointer(CFG_SERVERADDR));
+				GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Auto APN:%s,APN:%s,%s,%s,Server:%s",get_enable_str(lang,from,is_on),(char*)config_service_get_pointer(CFG_APN_NAME),(char*)config_service_get_pointer(CFG_APN_USER),(char*)config_service_get_pointer(CFG_APN_PWD),(char*)config_service_get_pointer(CFG_SERVERADDR));
 			}
 		}
 		break;
@@ -2503,7 +2925,6 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 			}
 			else if(para_num == 2)
 			{
-
 				config_service_set(CFG_IS_STATIC_UPLOAD, TYPE_BOOL, &is_on, sizeof(is_on));
 				if(GM_SUCCESS != config_service_save_to_local())
 				{	
@@ -2639,7 +3060,297 @@ GM_ERRCODE command_on_receive_data(CommandReceiveFromEnum from, char* p_cmd, u16
 			}
 		}
 		break;
-		
+
+		case CMD_2929_SET:
+		{
+			u8 jval = 0;
+            old_2929_cmd_set(from,&p_cmd_content[GM_strlen(cmd_name)],cmd_len - GM_strlen(cmd_name));
+            jval = old_2929_cmd_response(p_rsp,CMD_MAX_LEN);
+            jval += GM_sprintf(&p_rsp[jval], "\r\n");
+            jval += GM_sprintf(&p_rsp[jval], set_success_rsp(from));
+        }
+		break;
+
+		case CMD_RECORDVOL:
+		{
+			u8 recd_value;
+			para_num = command_scan((char*)p_cmd_content, "s;i", cmd_name,&recd_value);
+			if (para_num == 1)
+			{
+				config_service_get(CFG_VOICE_ENERGY, TYPE_BYTE, &recd_value, sizeof(recd_value));
+				if (1 == lang && COMMAND_GPRS == from)
+				{
+					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "录音音量:%d",recd_value);
+				}
+				else
+				{
+					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Recodvol:%d",recd_value);
+				}
+			}
+			else if(para_num == 2)
+			{
+
+				config_service_set(CFG_VOICE_ENERGY, TYPE_BYTE, &recd_value, sizeof(recd_value));
+				if(GM_SUCCESS != config_service_save_to_local())
+				{	
+					GM_memcpy(p_rsp, set_fail_rsp(from), CMD_MAX_LEN);
+				}
+				else
+				{
+					GM_memcpy(p_rsp, set_success_rsp(from), CMD_MAX_LEN);
+				}
+				
+			}
+			else
+			{
+				GM_memcpy(p_rsp, set_fail_rsp(from), CMD_MAX_LEN);
+			}
+		}
+		break;
+
+		case CMD_WORKMODE:
+		{
+			u8 work_mode_new = 0;
+			u8 work_mode_old = 0;
+
+			if (!hard_ware_is_device_w())
+			{
+				GM_memcpy(p_rsp, set_fail_rsp(from), CMD_MAX_LEN);
+				break;
+			}
+			config_service_get(CFG_WORKMODE, TYPE_BYTE, &work_mode_old, sizeof(work_mode_old));
+			para_num = command_scan((char*)p_cmd_content, "sc", cmd_name,&work_mode_new);
+			if (work_mode_new == '?')
+			{
+				GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Workmode,%d#",work_mode_old);
+			}
+			else if(work_mode_new >='0' && work_mode_new <= '2')
+			{
+				work_mode_new -= '0';
+				if (work_mode_new != work_mode_old)
+				{
+					config_service_set(CFG_WORKMODE, TYPE_BYTE, &work_mode_new, sizeof(work_mode_new));
+					config_service_save_to_local();
+					
+					//如果在工作状态，重启GPS（切换工作模式)
+					if(GM_SYSTEM_STATE_WORK == system_state_get_work_state())
+					{
+						gps_power_off();
+						gps_power_on(true);
+					}
+					if (work_mode_new != 0)
+					{
+						gps_service_wifi_atonce();
+					}
+				}
+				GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Workmode,%d#",work_mode_new);
+			}
+			else
+			{
+				GM_memcpy(p_rsp, set_fail_rsp(from), CMD_MAX_LEN);
+			}
+		}
+		break;
+
+        case CMD_GPM_INTERVAL:
+        {
+            u16 gpm_interval;
+
+            para_num = command_scan((char*)p_cmd_content, "s;i", cmd_name,&gpm_interval);
+			if(para_num == 2)
+			{
+                
+                if(gpm_interval == 0 || gpm_interval >= 60)
+                {
+                    config_service_set(CFG_GPM_INTERVAL,TYPE_SHORT,&gpm_interval,sizeof(u16));
+                    
+                    GPMFUN(recreate)();
+                    
+                    GM_memcpy(p_rsp, set_success_rsp(from), CMD_MAX_LEN);
+                }
+                else
+                {
+                    GM_memcpy(p_rsp, set_fail_rsp(from), CMD_MAX_LEN);
+                }				
+			}
+			else
+			{
+                config_service_get(CFG_GPM_INTERVAL,TYPE_SHORT,&gpm_interval,sizeof(u16));
+                
+                GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "GPM interval,%d#",gpm_interval);
+                
+				//GM_memcpy(p_rsp, set_fail_rsp(from), CMD_MAX_LEN);
+			}
+        }
+		break;
+
+		case CMD_NWSCAN_MODE:
+		{
+            u8 scan_mode = 0;
+
+            para_num = command_scan((char*)p_cmd_content, "s;i", cmd_name,&scan_mode);
+			if(para_num == 2)
+			{
+                if (scan_mode <= 4)
+                {
+                	config_service_set(CFG_4G_NWSCAN,TYPE_BYTE,&scan_mode,sizeof(u8));
+                	if(GM_SUCCESS != config_service_save_to_local())
+					{	
+						GM_memcpy(p_rsp, set_fail_rsp(from), CMD_MAX_LEN);
+					}
+					else
+					{
+						gps_service_destroy_gprs();
+						at_command_set_nwscanmode(scan_mode);
+						GM_memcpy(p_rsp, set_success_rsp(from), CMD_MAX_LEN);
+					}
+                }
+                else
+                {
+                    GM_memcpy(p_rsp, set_fail_rsp(from), CMD_MAX_LEN);
+                }				
+			}
+			else
+			{
+                config_service_get(CFG_4G_NWSCAN,TYPE_BYTE,&scan_mode,sizeof(u8));
+                GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "4G network scan mode,%d",scan_mode);
+			}
+        }
+		break;
+
+		case CMD_SIGNAL_INTERVAL:
+		{
+			u16 signal_interval = 0;
+			para_num = command_scan((char*)p_cmd_content, "s;i", cmd_name,&signal_interval);
+			if (para_num == 1)
+			{
+				config_service_get(CFG_SIGNAL_INTERVAL, TYPE_SHORT, &signal_interval, sizeof(signal_interval));
+				if (1 == lang && COMMAND_GPRS == from)
+				{
+					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "信号量上传间隔:%d",signal_interval);
+				}
+				else
+				{
+					GM_snprintf((char*)p_rsp, CMD_MAX_LEN, "Signal interval:%d",signal_interval);
+				}
+			}
+			else if (para_num == 2)
+			{
+				if (signal_interval <= CONFIG_UPLOAD_TIME_MAX)
+				{
+					config_service_set(CFG_SIGNAL_INTERVAL, TYPE_SHORT, &signal_interval, sizeof(signal_interval));
+					config_service_save_to_local();
+					GM_memcpy(p_rsp, set_success_rsp(from), CMD_MAX_LEN);
+				}
+				else
+				{
+					GM_memcpy(p_rsp, set_fail_rsp(from), CMD_MAX_LEN);
+				}
+			}
+			else
+			{
+				GM_memcpy(p_rsp, set_fail_rsp(from), CMD_MAX_LEN);
+			}
+		}
+		break;
+
+		case CMD_AT_CMD:
+		{
+			char at_para0[50] = {0};
+			char at_para1[20] = {0};
+			char at_para2[20] = {0};
+			char at_para3[20] = {0};
+			char at_para4[20] = {0};
+			char at_para5[20] = {0};
+			char at_string[200] = {0};
+			u8 at_len = 0;
+			AtCommandTypeEnum command_type = COMMAND_TEST;
+			char *p = NULL;
+			AtCommandThird third_cmd = {0};
+			para_num = command_scan((char*)p_cmd_content, "s;sssss", cmd_name,at_para0,at_para1,at_para2,at_para3,at_para4,at_para5);
+			if (hard_ware_is_at_command() && para_num >= 2 && para_num <= 7)
+			{
+				if (GM_strstr(at_para0, "=?"))
+				{
+					GM_sscanf(at_para0, "%[^=?]",third_cmd.cmd_str);
+					command_type = COMMAND_TEST;
+				}
+				else if (GM_strstr(at_para0, "?"))
+				{
+					GM_sscanf(at_para0, "%[^?]",third_cmd.cmd_str);
+					command_type = COMMAND_READ;
+				}
+				else if (GM_strstr(at_para0, "="))
+				{
+					p = GM_strstr(at_para0, "=");
+					GM_sscanf(at_para0, "%[^=]",third_cmd.cmd_str);
+					command_type = COMMAND_WRITE;
+				}
+				else
+				{
+					GM_memcpy(third_cmd.cmd_str, at_para0, GM_strlen(at_para0));
+					command_type = COMMAND_EXECUTION;
+				}
+
+				if (command_type == COMMAND_WRITE)
+				{
+					if (p)
+					{
+						at_len += GM_snprintf(&at_string[at_len], 200-at_len, &p[1]);
+					}
+					if (para_num >= 3)
+					{
+						at_string[at_len++] = ',';
+						at_len += GM_snprintf(&at_string[at_len], 200-at_len, at_para1);
+					}
+					if (para_num >= 4)
+					{
+						at_string[at_len++] = ',';
+						at_len += GM_snprintf(&at_string[at_len], 200-at_len, at_para2);
+					}
+					if (para_num >= 5)
+					{
+						at_string[at_len++] = ',';
+						at_len += GM_snprintf(&at_string[at_len], 200-at_len, at_para3);
+					}
+					if (para_num >= 6)
+					{
+						at_string[at_len++] = ',';
+						at_len += GM_snprintf(&at_string[at_len], 200-at_len, at_para4);
+					}
+					if (para_num >= 7)
+					{
+						at_string[at_len++] = ',';
+						at_len += GM_snprintf(&at_string[at_len], 200-at_len, at_para5);
+					}
+				}
+
+				third_cmd.from = from;
+				if (pmsg)
+				{
+					GM_memcpy(&third_cmd.sms_msg, pmsg, sizeof(third_cmd.sms_msg));
+				}
+				if (GM_SUCCESS == at_command_send_by_third(&third_cmd, command_type, (u8*)at_string,at_len))
+				{
+					GM_memcpy(p_rsp, set_success_rsp(from), CMD_MAX_LEN);
+				}
+				else
+				{
+					GM_memcpy(p_rsp, set_fail_rsp(from), CMD_MAX_LEN);
+				}
+			}
+			else if (para_num == 1)
+			{
+				at_command_send_by_third(NULL, command_type, NULL,0);
+				GM_memcpy(p_rsp, set_success_rsp(from), CMD_MAX_LEN);
+			}
+			else
+			{
+				GM_memcpy(p_rsp, set_fail_rsp(from), CMD_MAX_LEN);
+			}
+		}
+		break;
+
 		default:
 		{
 			U16 lang = 0;
@@ -2776,9 +3487,9 @@ static char command_scan(const char* p_command, const char* p_format, ...)
 			{ 
                 p_buf = va_arg(ap, char*);
 
-                if (p_field && util_isprint((U8)*p_field) && *p_field != ',' && *p_field != '#') 
+                if (p_field && util_isprint((U8)*p_field) && *p_field != ',' && *p_field != '#' && *p_field != '*') 
 				{
-                    while (util_isprint((U8)*p_field) && *p_field != ',' && *p_field != '#')
+                    while (util_isprint((U8)*p_field) && *p_field != ',' && *p_field != '#' && *p_field != '*')
                     {
                         *p_buf++ = *p_field++;
                     }

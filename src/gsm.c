@@ -37,6 +37,8 @@
 #include "led.h"
 #include "config_service.h"
 #include "auto_test.h"
+#include "hard_ware.h"
+#include "at_command.h"
 
 
 //伪基站检查周期20秒
@@ -64,6 +66,8 @@ typedef struct
 
 	gm_cell_info_struct cell_info;
 
+	gm_lte_cell_info_struct lte_cell_info;
+
 	//每20秒收到伪基站回调次数
 	U8 fake_cell_count_per_20second;
 
@@ -77,10 +81,11 @@ typedef struct
 static GSM s_gsm;
 
 static void check_sim_card(void);
-GsmRegState gsm_get_creg_state(void);
 static bool imei_is_valid(U8* p_imei);
 static void get_gsm_info(void);
 static void gsm_iccid_callback(void* p_msg);
+static void gsm_imsi_callback(void* p_msg);
+static void gsm_lte_lbs_callback(bool is_lte, void* p_msg);
 static void gsm_lbs_callback(void* p_msg);
 static void gsm_imei_callback(void* p_imei);
 static void gsm_call_status_callback(void* p_msg);
@@ -250,7 +255,8 @@ static bool imei_is_valid(U8* p_imei)
 
 U8 gsm_get_csq(void)
 {
-	S32 csq = GM_GetSignalValue();
+	S32 csq = hard_ware_is_at_command() ? at_command_csq_value() : GM_GetSignalValue();
+
 	csq = csq < GM_CSQ_MIN ? GM_CSQ_MIN : csq;
 	csq = csq > GM_CSQ_MAX ? GM_CSQ_MAX : csq;
 	return (U8)csq;
@@ -268,6 +274,7 @@ GM_ERRCODE gsm_get_cell_info(gm_cell_info_struct* p_cell_info)
 		LOG(ERROR,"SIM is invalid");
 		return GM_NOT_INIT;
 	}
+	
     if((s_gsm.cell_info.serv_info.lac > 0)&&(s_gsm.cell_info.serv_info.ci > 0))
     {
         *p_cell_info = s_gsm.cell_info;
@@ -278,9 +285,61 @@ GM_ERRCODE gsm_get_cell_info(gm_cell_info_struct* p_cell_info)
     return GM_NOT_INIT;
 }
 
+
+GM_ERRCODE gsm_get_lte_cell_info(gm_lte_cell_info_struct* p_cell_info)
+{
+	if (NULL == p_cell_info)
+	{
+		return GM_PARAM_ERROR;
+	}
+
+	if (!s_gsm.sim_is_valid)
+	{
+		//LOG(ERROR,"SIM is invalid");
+		return GM_NOT_INIT;
+	}
+	
+	if((s_gsm.lte_cell_info.lac > 0)&&(s_gsm.lte_cell_info.ci > 0))
+    {
+    	GM_memcpy(p_cell_info, &s_gsm.lte_cell_info, sizeof(gm_lte_cell_info_struct));
+    	LOG(DEBUG,"Succeed to Get Lte LBS");
+    	return GM_SUCCESS;
+    }
+
+    return GM_NOT_INIT;
+}
+
+
+
+bool get_sim_valid(void)
+{
+	return s_gsm.sim_is_valid;
+}
+
+
+static void gsm_check_sim_call_back(void *msg)
+{
+	bool *is_valid = (void*)msg;
+
+	s_gsm.sim_is_valid = *is_valid;
+}
+
+
+static bool gsm_check_sim_valid(void)
+{
+	if (hard_ware_is_at_command())
+	{
+		return at_command_sim_valid(gsm_check_sim_call_back);
+	}
+	else
+	{
+		return GM_CheckSimValid();
+	}
+}
+
 static void check_sim_card(void)
 {
-	if (GM_CheckSimValid())
+	if (gsm_check_sim_valid())
     {
         if (!s_gsm.sim_is_valid)
         {
@@ -295,13 +354,32 @@ static void check_sim_card(void)
 	get_gsm_info();
 }
 
+
 static void get_gsm_info(void)
 {
-	GM_GetIccid(gsm_iccid_callback);
-	GM_GetLbsInfo(gsm_lbs_callback);
-	GM_memset(s_gsm.imsi, 0, sizeof(s_gsm.imsi));
-    GM_GetImsi((char*)s_gsm.imsi);
+	if (hard_ware_is_at_command())
+	{
+		at_command_get_iccid(gsm_iccid_callback);
+		at_command_get_imsi(gsm_imsi_callback);
+		at_command_get_lbs(gsm_lte_lbs_callback);
+		at_command_creg_register();
+	}
+	else
+	{
+		GM_GetIccid(gsm_iccid_callback);
+		GM_GetLbsInfo(gsm_lbs_callback);
+		GM_memset(s_gsm.imsi, 0, sizeof(s_gsm.imsi));
+	    GM_GetImsi((char*)s_gsm.imsi);
+    }
 	GM_GetImei(gsm_imei_callback);
+	if (s_gsm.sim_is_valid)
+	{
+		GM_StartTimer(GM_TIMER_GSM_CHECK_SIMCARD, 20*TIM_GEN_1SECOND, check_sim_card);
+	}
+	else
+	{
+		GM_StartTimer(GM_TIMER_GSM_CHECK_SIMCARD, TIM_GEN_1SECOND, check_sim_card);
+	}
 }
 
 //20秒内出现50次以上伪基站信号报警，20秒内没有伪基站信号报警恢复，报警最先间隔2分钟
@@ -313,6 +391,61 @@ static void gsm_iccid_callback(void* p_msg)
     }
     GM_memcpy(s_gsm.iccid, p_msg, GM_ICCID_LEN);
 }
+
+
+static void gsm_imsi_callback(void* p_msg)
+{
+	if (NULL == p_msg || GM_strlen((char*)p_msg) != GM_IMSI_LEN)
+    {
+		return;
+    }
+    GM_memcpy(s_gsm.imsi, p_msg, GM_IMSI_LEN);
+}
+
+
+static void gsm_lte_lbs_callback(bool is_lte, void* p_msg)
+{
+	U32 delay = 0;
+	gm_lte_cell_info_struct lte_cell_info;
+	
+    if (NULL == p_msg)
+    {
+    	LOG(DEBUG, "gsm_lte_lbs_callback msg null");
+	    GM_StartTimer(GM_TIMER_GSM_CHECK_SIMCARD, TIM_GEN_1SECOND, check_sim_card);
+        return;
+    }
+
+    if (is_lte)
+    {
+    	GM_memcpy((void *)&lte_cell_info, (void *)(p_msg), sizeof(gm_lte_cell_info_struct));
+    	if (lte_cell_info.ci && lte_cell_info.ci != 0xFFFFFFFF && lte_cell_info.mcc != 65535)
+    	{
+			GM_memcpy((void *)&s_gsm.lte_cell_info, (void *)(p_msg), sizeof(gm_lte_cell_info_struct));
+			GM_memset(&s_gsm.cell_info, 0, sizeof(gm_cell_info_struct));
+    		delay = TIM_GEN_1SECOND * 10;
+    	}
+    	else
+    	{
+    		delay = TIM_GEN_1SECOND;
+    	}
+    }
+    else
+    {
+		GM_memcpy((void *)&s_gsm.cell_info, (void *)(p_msg), sizeof(gm_cell_info_struct));
+		GM_memset(&s_gsm.lte_cell_info, 0, sizeof(gm_lte_cell_info_struct));
+		if (s_gsm.cell_info.nbr_cell_num >= 3)
+		{
+			delay = TIM_GEN_1SECOND * 10;
+		}
+		else
+		{
+			delay = TIM_GEN_1SECOND;
+		}
+    }
+   
+	GM_StartTimer(GM_TIMER_GSM_CHECK_SIMCARD, delay, check_sim_card);
+}
+
 
 static void gsm_lbs_callback(void* p_msg)
 {
@@ -344,6 +477,10 @@ static void gsm_imei_callback(void* p_imei)
 	if (GM_IMEI_LEN != GM_strlen((char*)s_gsm.imei))
 	{
 		GM_memcpy(s_gsm.imei, p_imei, GM_IMEI_LEN);
+		if (0 != GM_memcmp(s_gsm.imei, GOOME_IMEI_DEFAULT, GM_IMEI_LEN))
+		{
+			GM_SetFakeCellFeature((kal_bool)true);
+		}
 	}
 }
 

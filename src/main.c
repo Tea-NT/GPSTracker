@@ -44,6 +44,10 @@
 #include "update_file.h"
 #include "gm_app.h"
 #include "gm_fs.h"
+#include "wifi.h"
+#include "recorder.h"
+#include "call.h"
+#include "at_command.h"
 
 static void timer_self_test_start(void);
 static void upload_boot_log(void);
@@ -89,26 +93,35 @@ void app_main_entry(void)
 	system_state_create();
 	config_service_read_from_local();
     config_service_save_to_local();
+    
 
 	config_service_set_test_mode(false);
-
 	gsm_create();
     //其中创建网络服务
 	gprs_create();
 	sms_create();
 	hard_ware_create();
+	at_command_create();
 	led_create();
 	relay_create();
 	watch_dog_create();
 	gps_create();
+	call_create();
 
 	GM_StartTimer(GM_TIMER_MAIN_UPLOAD_LOG, 2*TIM_GEN_1SECOND, upload_boot_log);
 	
 	g_sensor_create();
 	system_state_set_work_state(GM_SYSTEM_STATE_WORK);
-	gps_power_on(true);
-	
-	
+	if (config_service_get_gps_close())
+	{
+		enter_sleep_mode();
+	}
+	else
+	{
+		gps_power_on(true);
+	    GPMFUN(startup)();
+	}
+
 	//延迟30秒再开始自检，否则还没有获取到IMEI会误入自检
 	if(GM_REBOOT_POWER_ON == system_state_get_boot_reason(false))
 	{
@@ -129,19 +142,24 @@ void app_main_entry(void)
 //唤醒时用这个定时器处理
 void timer_10ms_proc(void)
 {
-	if (GM_SYSTEM_STATE_WORK == system_state_get_work_state())
+	if (GM_SYSTEM_STATE_WORK == system_state_get_work_state() || hard_ware_is_at_command())
 	{
 		GM_StartTimer(GM_TIMER_10MS_MAIN, TIM_GEN_10MS, timer_10ms_proc);
 		led_timer_proc();
 		g_sensor_timer_proc();
     	gprs_timer_proc();
 		hard_ware_timer_proc();
+		wifi_timer_proc();
+		at_command_timer_proc();
+		#ifdef _SW_SUPPORT_RECORD_
+		recorder_timer_proc();
+		#endif
 	}
 }
 
 void timer_1s_proc(void)
 {
-	if (GM_SYSTEM_STATE_WORK == system_state_get_work_state())
+	if (GM_SYSTEM_STATE_WORK == system_state_get_work_state() || hard_ware_is_at_command())
 	{
 		GM_StartTimer(GM_TIMER_1S_MAIN, TIM_GEN_1SECOND, timer_1s_proc);
 		util_timer_proc();
@@ -156,13 +174,14 @@ void timer_1s_proc(void)
 //休眠时用这个定时器处理
 void kal_timer_1s_proc(void* p_arg)
 {
-	if (GM_SYSTEM_STATE_SLEEP == system_state_get_work_state())
+	if (GM_SYSTEM_STATE_SLEEP == system_state_get_work_state() && !hard_ware_is_at_command())
 	{
 		//降频处理
 		led_timer_proc();
 		g_sensor_timer_proc();
 		gprs_timer_proc();
 		hard_ware_timer_proc();
+		at_command_timer_proc();
 
 		//正常处理
 		util_timer_proc();
@@ -171,6 +190,10 @@ void kal_timer_1s_proc(void* p_arg)
 		system_state_timer_proc();
 		relay_timer_proc();
 		auto_test_timer_proc();
+		wifi_timer_proc();
+		#ifdef _SW_SUPPORT_RECORD_
+		recorder_timer_proc();
+		#endif
 	}
 }
 
@@ -229,6 +252,9 @@ static void upload_boot_log(void)
 	hard_ware_get_power_voltage(&voltage);
 	json_add_double(p_log_root, "power voltage", voltage);
 
+	hard_ware_get_internal_battery_voltage(&voltage);
+	json_add_double(p_log_root, "battery voltage", voltage);
+
 	config_service_get(CFG_GPS_TYPE, TYPE_BYTE, &gps_chip_type, sizeof(gps_chip_type));
 	json_add_int(p_log_root, "gps chip", gps_chip_type);
 
@@ -251,7 +277,7 @@ static void upload_boot_log(void)
 	json_add_int(p_log_root, "command reboots", system_state_get_reboot_counts(GM_REBOOT_CMD));
 	json_add_int(p_log_root, "upgrade reboots", system_state_get_reboot_counts(GM_REBOOT_UPDATE));
 	json_add_int(p_log_root, "check params reboots", system_state_get_reboot_counts(GM_REBOOT_CHECKPARA));
-	
+	json_add_int(p_log_root, "check record reboots", system_state_get_reboot_counts(GM_REBOOT_RECORD_FAIL));
 	json_add_int(p_log_root, "gprs_last_good", system_state_get_last_good_time());
 	json_add_int(p_log_root, "gprs_ok_count", system_state_get_call_ok_count());
 	json_add_string(p_log_root, "gpss_reboot_reason", system_state_get_gpss_reboot_reason());

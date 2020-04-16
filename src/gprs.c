@@ -18,6 +18,7 @@
 #include "hard_ware.h"
 #include "gsm.h"
 #include "led.h"
+#include "at_command.h"
 
 
 typedef enum 
@@ -38,6 +39,8 @@ typedef struct
     u32 start_apn_time;   //开始注册apn时间
     u32 last_good_time;  // 上次网络正常的时间
     u32 call_ok_count;   //CURRENT_GPRS_INIT->CURRENT_GPRS_CALL_OK 次数
+    s32 bear_status;
+    bool apn_ok;
 }GprsType;
 static GprsType s_gprs;
 
@@ -60,11 +63,22 @@ static void gprs_init_proc(void);
 static void gprs_call_ok_proc(void);
 static void gprs_failed_proc(void);
 static void gprs_config_apn(void);
+static void gprs_destroy_call_back(void *msg);
+
 
 const char * gprs_status_string(u8 statu)
 {
     return s_gprs_status_string[statu];
 }
+
+
+static void set_apn_call_back(void *msg)
+{
+	bool *apn_ok = (bool *)msg;
+
+	s_gprs.apn_ok = *apn_ok;
+}
+
 
 static void gprs_config_apn(void)
 {
@@ -74,6 +88,8 @@ static void gprs_config_apn(void)
     gm_cell_info_struct cell_info;
     u8 imsi[GM_IMSI_LEN + 1];
     u8 auto_check_apn = false;
+    JsonObject* p_log_root = json_create();
+    char print_string[100];
 
     GM_memset(&auto_apn, 0 , sizeof(auto_apn));
     GM_memset(&apnConfig, 0 , sizeof(apnConfig));
@@ -127,11 +143,29 @@ static void gprs_config_apn(void)
     }
 
     //注册apn后, 就可以通过 GM_GetBearerStatus 检测网络状态
+    if (hard_ware_is_at_command())
+    {
+    	s_gprs.apn_ok = false;
+    	at_command_set_apn(apnConfig, set_apn_call_back);
+    	LOG(INFO,"config_service_apn. name(%s),user(%s),pwd(%s),auth(%d)", 
+		apnConfig.apnName, apnConfig.apnUserId, apnConfig.apnPasswd, apnConfig.authtype);
+    }
+    else
+    {
     GM_ApnConfig(&apnConfig, &account_id);
     LOG(INFO,"config_service_apn get account_id(%d). name(%s),user(%s),pwd(%s),auth(%d)", account_id, 
 		apnConfig.apnName, apnConfig.apnUserId, apnConfig.apnPasswd, apnConfig.authtype);
 
+	if (account_id > 0)
+	{
+		GM_sprintf(print_string,"Apn config. apn:%s,%s,%s. authtype:%d", apnConfig.apnName, apnConfig.apnUserId, apnConfig.apnPasswd, apnConfig.authtype);
+		json_add_string(p_log_root, "event", print_string);
+		log_service_upload(INFO,p_log_root);
+	}
+		
     gm_socket_set_account_id(account_id);
+    }
+    
 }
 
 static GM_ERRCODE gprs_transfer_status(u8 new_status)
@@ -249,6 +283,99 @@ static GM_ERRCODE gprs_transfer_status(u8 new_status)
 }
 
 
+void gprs_socket_notify_by_at_command(void* msg_ptr)
+{
+    SocketType * socket;
+    gm_soc_notify_at_command_struct *msg = (gm_soc_notify_at_command_struct *)msg_ptr;
+    
+    socket = get_socket_by_accessid(msg->access_id);
+    if(!socket)
+    {
+        LOG(ERROR,"clock(%d) gprs_socket_notify_by_at_command assert(socket_id(%d)) failed.", util_clock(), msg->access_id);
+    	at_command_close_connect(msg->access_id);
+        return;
+    }
+    else
+    {
+       /* LOG(ERROR,"clock(%d) gprs_socket_notify_by_at_command socket->access_id(%d) result(%d) event(%d) detail_cause(%d).", 
+            util_clock(), socket->access_id, msg->result, msg->event_type, msg->detail_cause);
+		*/
+    }
+    
+    if (msg->result)
+    {
+        switch (msg->event_type)
+        {
+            case GM_SOC_READ:
+                gm_socket_recv_for_at_command(socket);
+                break;
+                
+            case GM_SOC_WRITE:
+            	socket->last_ack_seq += msg->msg_len;
+            	gm_socket_send_result(socket, true);
+                //LOG(INFO,"clock(%d) gprs_socket_notify_by_at_command GM_SOC_WRITE(%d) msg_len(%d).", util_clock(), msg->access_id, msg->msg_len);
+                
+                break;
+                
+            case GM_SOC_ACCEPT:
+                //LOG(INFO,"clock(%d) gprs_socket_notify_by_at_command GM_SOC_ACCEPT(%d).", util_clock(), msg->access_id);
+                break;
+                
+            case GM_SOC_CONNECT:
+            {
+                /*LOG(INFO,"clock(%d) gprs_socket_notify_by_at_command tcp(%d.%d.%d.%d:%d) access_id(%d) success.", 
+                    			util_clock(), socket->ip[0], socket->ip[1], socket->ip[2], socket->ip[3], socket->port, socket->access_id);
+				*/
+                socket->id = socket->access_id;
+                gm_socket_connect_ok(socket);
+                break;
+            }
+            
+            case GM_SOC_CLOSE:
+            {
+                //LOG(INFO,"clock(%d) gprs_socket_notify_by_at_command id(%d) close. error_cause(%d)", util_clock(), msg->access_id,msg->detail_cause);
+                gm_socket_close_ok(socket);
+                break;
+            }
+            default:
+            {
+                //LOG(ERROR,"clock(%d) gprs_socket_notify id(%d) unknown. error_cause(%d).", util_clock(), msg->access_id,msg->detail_cause);
+                break;
+            }
+        }
+    }
+    else //if (msg->detail_cause != 563)
+    {
+        char reason[30];
+
+        /*if (msg->event_type == GM_SOC_WRITE)
+        {
+        	gm_socket_send_result(socket, false);
+        	return;
+        }*/
+        GM_snprintf(reason,sizeof(reason),"s(%d) err(%d)", socket->access_id, msg->detail_cause);
+        reason[sizeof(reason) - 1] = 0;
+        system_state_set_gpss_reboot_reason(reason);
+
+        //LOG(DEBUG,"clock(%d) gprs_socket_notify_by_at_command access_id(%d) error_cause(%d).", util_clock(), msg->access_id,msg->detail_cause);
+        if (get_sim_valid() == 0)
+        {
+            LOG(INFO,"clock(%d) gprs_socket_notify_by_at_command GM_CheckSimValid failed.", util_clock());
+        }
+
+        if(socket->access_id == SOCKET_INDEX_MAIN)
+        {
+            gps_service_destroy_gprs();
+        }
+        else
+        {
+            gm_socket_destroy(socket);
+        }
+    }
+}
+
+
+
 void gprs_socket_notify(void* msg_ptr)
 {
     SocketType * socket;
@@ -348,11 +475,23 @@ GM_ERRCODE gprs_create(void)
     return GM_SUCCESS;
 }
 
+static bool check_gprs_register(void)
+{
+	if (hard_ware_is_at_command())
+	{
+		return at_command_cgreg_register();
+	}
+	else
+	{
+		return GM_GetServiceAvailability();
+	}
+}
+
 static void gprs_init_proc(void)
 {
     u32 current_time = 0;
     
-    if (GM_GetServiceAvailability())
+    if (check_gprs_register())
     {
         // 注网成功(包括cg 与creg)
         U8 iccid[30] = {0};
@@ -366,9 +505,10 @@ static void gprs_init_proc(void)
         gprs_config_apn();
         s_gprs.start_apn_time = util_clock();
         gprs_transfer_status(CURRENT_GPRS_CALL_OK);
-
-		GM_SocketRegisterCallBack(gprs_socket_notify);
-		
+		if(!hard_ware_is_at_command())
+		{
+			GM_SocketRegisterCallBack(gprs_socket_notify);
+		}
 		log_service_upload(INFO,p_log_root);
 		
     }
@@ -386,14 +526,62 @@ static void gprs_init_proc(void)
     }
 }
 
+static void get_local_ip_call_back(void* msg)
+{
+	JsonObject* p_log_root = json_create();
+    char print_string[100];
+    u8 *local_ip = (u8 *)msg;
+    
+	if (msg == NULL)
+	{
+		return;
+	}
+
+	GM_sprintf(print_string,"GPRS net ok. ip=%d.%d.%d.%d", local_ip[0], local_ip[1], local_ip[2], local_ip[3]);
+	json_add_string(p_log_root, "event", print_string);
+	json_add_int(p_log_root, "csq", gsm_get_csq());
+	log_service_upload(INFO,p_log_root);
+}
+
+static void attach_network_call_back(void* msg)
+{
+	bool *is_success = (bool *)msg;
+
+	LOG(DEBUG,"clock(%d) attach_network_call_back is_success(%d)", util_clock(), *is_success);
+	if (*is_success)
+	{
+		s_gprs.bear_status = 4;
+		at_command_get_local_ip(get_local_ip_call_back);
+	}
+	else
+	{
+		s_gprs.bear_status = 0;
+		led_set_gsm_state(GM_LED_FLASH);
+	    s_gprs.failed_time = util_clock();
+	    gm_socket_global_destroy();
+	    at_command_unattach_network(gprs_destroy_call_back);
+	    gprs_transfer_status(CURRENT_GPRS_FAILED);
+	}
+}
 
 static void gprs_call_ok_proc(void)
 {
     u32 current_time = 0;
-    s32 bear_status = 0;
-    GM_GetBearerStatus(&bear_status);
 
-    if (4 == bear_status)
+    if (hard_ware_is_at_command())
+    {
+    	if (s_gprs.apn_ok)
+    	{
+    		at_command_attach_network(attach_network_call_back);
+    		s_gprs.apn_ok = false;
+    	}
+    }
+    else
+    {
+    	GM_GetBearerStatus(&s_gprs.bear_status);
+    }
+
+    if (4 == s_gprs.bear_status)
     {
         u8 local_ip[4] = {0};
         u8 ret = 0;
@@ -405,11 +593,14 @@ static void gprs_call_ok_proc(void)
 
 
         // 网络可用了
-        ret = GM_GetLocalIP(local_ip);
-        sprintf(print_string,"GPRS net ok. ret=%d, ip=%d.%d.%d.%d", ret, local_ip[0], local_ip[1], local_ip[2], local_ip[3]);
-		json_add_string(p_log_root, "event", print_string);
-		json_add_int(p_log_root, "csq", gsm_get_csq());
-		log_service_upload(INFO,p_log_root);
+        if (!hard_ware_is_at_command())
+        {
+	        ret = GM_GetLocalIP(local_ip);
+	        GM_sprintf(print_string,"GPRS net ok. ret=%d, ip=%d.%d.%d.%d", ret, local_ip[0], local_ip[1], local_ip[2], local_ip[3]);
+			json_add_string(p_log_root, "event", print_string);
+			json_add_int(p_log_root, "csq", gsm_get_csq());
+			log_service_upload(INFO,p_log_root);
+		}
     }
     else
     {
@@ -421,10 +612,18 @@ static void gprs_call_ok_proc(void)
             reason[sizeof(reason) - 1] = 0;
             system_state_set_gpss_reboot_reason(reason);
             */
-            LOG(INFO,"clock(%d) gprs_call_ok_proc gprs_destroy because bear_status(%d)",util_clock(),bear_status);
+            LOG(INFO,"clock(%d) gprs_call_ok_proc gprs_destroy because bear_status(%d)",util_clock(),s_gprs.bear_status);
             gprs_destroy();
         }
     }
+}
+
+
+static void gprs_destroy_call_back(void *msg)
+{
+	led_set_gsm_state(GM_LED_FLASH);
+    s_gprs.failed_time = util_clock();
+    gprs_transfer_status(CURRENT_GPRS_FAILED);
 }
 
 GM_ERRCODE gprs_destroy(void)
@@ -447,13 +646,20 @@ GM_ERRCODE gprs_destroy(void)
 	
     gm_socket_global_destroy();
 
-    //关闭gprs网络等待重新注册成功
-    GM_AccountIdClose();
-    led_set_gsm_state(GM_LED_FLASH);
+	if (hard_ware_is_at_command())
+	{
+		at_command_unattach_network(gprs_destroy_call_back);
+	}
+	else
+	{
+		//关闭gprs网络等待重新注册成功
+    	GM_AccountIdClose();
+    	GM_SocketRegisterCallBack(NULL);
+    	led_set_gsm_state(GM_LED_FLASH);
+	    gprs_transfer_status(CURRENT_GPRS_FAILED);
+	}
+	s_gprs.failed_time = util_clock();
 
-    s_gprs.failed_time = util_clock();
-    gprs_transfer_status(CURRENT_GPRS_FAILED);
-	GM_SocketRegisterCallBack(NULL);
     return GM_SUCCESS;
 }
 

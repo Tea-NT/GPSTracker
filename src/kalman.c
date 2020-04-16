@@ -54,6 +54,10 @@ KalmanFilter* kalman_create(int state_dimension,int observation_dimension)
 
 void kalman_destroy(KalmanFilter* p_filter) 
 { 
+	if (NULL == p_filter)
+	{
+		return;
+	}
 	matrix_destroy(p_filter->p_state_transition);
 	matrix_destroy(p_filter->p_observation_model);
 	matrix_destroy(p_filter->p_process_noise_covariance);

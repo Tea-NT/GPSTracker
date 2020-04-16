@@ -27,6 +27,8 @@
 #include "fifo.h"
 #include "log_service.h"
 #include "command.h"
+#include "at_command.h"
+#include "hard_ware.h"
 #define GM_NUMBER_MAX_LEN 20
 #define GM_SMS_QUEUE_LEN 3
 
@@ -36,6 +38,7 @@ typedef struct
 	ENUM_SMSAL_DCS doc_type;
 	char number[GM_NUMBER_MAX_LEN];
 	char content[CMD_MAX_LEN];
+	u16 contentlen;
 }Message;
 
 typedef struct
@@ -55,6 +58,7 @@ static void on_recv_sms(void* p_msg);
 
 GM_ERRCODE sms_create(void)
 {
+	at_command_sms_register(on_recv_sms);
 	GM_RegisterCallBack(GM_CB_SMS_RECEIVE, (U32)on_recv_sms);
 	fifo_init(&s_sms.message_queue, GM_SMS_QUEUE_LEN * sizeof(Message));
 	return GM_SUCCESS;
@@ -78,6 +82,7 @@ GM_ERRCODE sms_send(const char* p_data, u16 data_len, char* number, ENUM_SMSAL_D
     msg.content[data_len] = 0;
     msg.content[data_len + 1] = 0;
 	msg.doc_type = doc_type;
+	msg.contentlen = data_len;
 	GM_strncpy(msg.number, number, GM_strlen((char*)number));
 	
 	ret = fifo_insert(&s_sms.message_queue, (U8*)&msg, sizeof(msg));
@@ -136,7 +141,15 @@ static void send_sms_real(void)
 	{
 		return;
 	}
-	GM_SendSMS(msg.number, msg.content, msg.doc_type, send_sms_callback);
+	
+	if (hard_ware_is_at_command())
+	{
+		at_command_sms_send(msg.number, msg.content, msg.contentlen, msg.doc_type, send_sms_callback);
+	}
+	else
+	{
+		GM_SendSMS(msg.number, msg.content, msg.doc_type, send_sms_callback);
+	}
 	LOG(INFO,"Send SMS:%s",msg.content);
 }
 

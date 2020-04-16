@@ -465,7 +465,8 @@ U8 g_sensor_get_angle(void)
 	{
 		return 0;
 	}
-	return (U8)last_angle;
+
+	return hard_ware_sensor_same_side_as_gps_antenna() ? (180- (U8)last_angle) : (U8)last_angle;
 }
 
 #define SC7A20_STR "SC7A20"
@@ -511,6 +512,52 @@ U8 g_sensor_get_shake_event_count_when_eint(void)
 {
 	return circular_queue_get_len(&s_gsensor.shake_event_time_queue_when_eint);
 }
+
+
+GM_ERRCODE enter_sleep_mode(void)
+{
+	if(GM_SYSTEM_STATE_WORK == system_state_get_work_state())
+	{
+		if(GM_SUCCESS == gps_power_off())
+		{
+			if (hard_ware_is_device_w())
+			{
+				GPMFUN(sleep)();
+			}
+			system_state_set_work_state(GM_SYSTEM_STATE_SLEEP);
+			led_set_gsm_state(GM_LED_OFF);
+			gps_service_heart_atonce();
+		}
+		s_gsensor.sleep_time = s_gsensor.no_shake_time_ms;
+	}
+	return GM_SUCCESS; 
+}
+
+
+GM_ERRCODE exit_sleep_mode(void)
+{
+	if(GM_SYSTEM_STATE_SLEEP == system_state_get_work_state())
+	{
+		if(GM_SUCCESS == gps_power_on(true))
+		{
+			system_state_set_work_state(GM_SYSTEM_STATE_WORK);
+			led_set_gsm_state(GM_LED_FLASH);
+			if (hard_ware_is_device_w())
+			{
+            	GPMFUN(wakeup)();
+			}
+			if (!hard_ware_is_at_command())
+			{
+				GM_StartTimer(GM_TIMER_10MS_MAIN, TIM_GEN_10MS, timer_10ms_proc);
+				GM_StartTimer(GM_TIMER_1S_MAIN, TIM_GEN_1SECOND, timer_1s_proc);
+			}
+			gps_service_heart_atonce();
+		}
+	}
+	return GM_SUCCESS; 
+}
+
+
 static void check_awake_sleep(void)
 {		
 	U32 now =  util_clock();
@@ -559,18 +606,7 @@ static void check_awake_sleep(void)
 	if (shake_count_when_read_data >= shake_count_threshold || shake_count_when_eint >= shake_count_threshold) 
 	{
 		s_gsensor.no_shake_time_ms = 0;
-		if(GM_SYSTEM_STATE_SLEEP == system_state_get_work_state())
-		{
-			if(GM_SUCCESS == gps_power_on(true))
-			{
-				system_state_set_work_state(GM_SYSTEM_STATE_WORK);
-				led_set_gsm_state(GM_LED_FLASH);
-				
-				GM_StartTimer(GM_TIMER_10MS_MAIN, TIM_GEN_10MS, timer_10ms_proc);
-				GM_StartTimer(GM_TIMER_1S_MAIN, TIM_GEN_1SECOND, timer_1s_proc);
-				LOG(INFO,"awake,shake_count_when_read_data=%d",shake_count_when_read_data);
-			}
-		}
+		exit_sleep_mode();
 	}
 	else
 	{
@@ -591,16 +627,7 @@ static void check_awake_sleep(void)
 		&& 0 != sleep_time_minute_threshold
 		&& gps_get_constant_speed_time() < MIN_CRUISE_SPEED_TIME)
 	{
-		if(GM_SYSTEM_STATE_WORK == system_state_get_work_state())
-		{
-			if(GM_SUCCESS == gps_power_off())
-			{
-				system_state_set_work_state(GM_SYSTEM_STATE_SLEEP);
-				led_set_gsm_state(GM_LED_OFF);
-
-			}
-			s_gsensor.sleep_time = s_gsensor.no_shake_time_ms;
-		}
+		enter_sleep_mode();
 	}
 
 	if (GM_SYSTEM_STATE_SLEEP == system_state_get_work_state())
@@ -812,6 +839,7 @@ static void init_gsensor_chip(void)
 static void read_data_from_chip(void)
 {
 	Aclr aclr = {0};
+	
 	if(!GM_I2cReadBytes(get_data_addr(s_gsensor.type), (U8*)&aclr, sizeof(aclr)))
 	{
         LOG(WARN, "Failed to read data from gsensor!");
@@ -972,7 +1000,6 @@ void check_vehicle_state(Aclr a)
     //垂直方向加速度（不含重力）
     Vector3D vehicle_vertical_aclr = {0, 0, 0};
     float vehicle_horizontal_aclr_magnitude = 0;
-    float vehicle_vertical_aclr_magnitude = 0;
 	bool aclr_alarm_enable = false;
 	
     
@@ -1013,7 +1040,7 @@ void check_vehicle_state(Aclr a)
 
 	        check_emergency_brake(vehicle_horizontal_aclr_magnitude);
 
-	        check_sudden_turn_acceleration(vehicle_vertical_aclr_magnitude);
+	        check_sudden_turn_acceleration(vehicle_horizontal_aclr_magnitude);
 		}     
     }
 	
@@ -1518,6 +1545,7 @@ static void check_static_or_run(float vehicle_horizontal_aclr_magnitude)
 				LOG(WARN,"MOVE ALARM");
 			}
 			system_state_set_vehicle_state(VEHICLE_STATE_RUN);
+			system_state_set_has_reported_gps_after_run(false);
 		}
 		LOG(DEBUG,"RUN:aclr=%f,thr=%f",vehicle_horizontal_aclr_magnitude,s_gsensor.threshold.run_thr);
   	}
@@ -1528,7 +1556,12 @@ static void check_static_or_run(float vehicle_horizontal_aclr_magnitude)
         //MIN_LOW_ACLR_NUM次加速度小于阈值才判定为静止了
         if (s_gsensor.static_low_aclr_count >= MIN_LOW_ACLR_NUM)
         {
-			system_state_set_vehicle_state(VEHICLE_STATE_STATIC);
+			//运动转静止立即上传（停车等红灯等）
+			if(VEHICLE_STATE_RUN == system_state_get_vehicle_state())
+			{
+				gps_service_send_one_locate(GPS_MODE_STATIC_POSITION, false);
+				system_state_set_vehicle_state(VEHICLE_STATE_STATIC);
+			}
         }
         //如果加速度特别低,连续10秒就变静止
         if (vehicle_horizontal_aclr_magnitude <= (s_gsensor.threshold.static_thr / 5))
@@ -1536,7 +1569,12 @@ static void check_static_or_run(float vehicle_horizontal_aclr_magnitude)
             s_gsensor.super_low_aclr_count++;
             if (s_gsensor.super_low_aclr_count >= MIN_LOW_ACLR_NUM / 2)
             {
-				system_state_set_vehicle_state(VEHICLE_STATE_STATIC);
+				//运动转静止立即上传（停车等红灯等）
+				if(VEHICLE_STATE_RUN == system_state_get_vehicle_state())
+				{
+					gps_service_send_one_locate(GPS_MODE_STATIC_POSITION, false);
+					system_state_set_vehicle_state(VEHICLE_STATE_STATIC);
+				}
             }
         }
         else

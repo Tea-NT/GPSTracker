@@ -4,8 +4,9 @@
 #include "gm_type.h"
 #include "error_code.h"
 #include "fifo.h"
+#include "gm_gprs.h"
 
-#define MAX_SOCKET_RECV_MSG_LEN 750
+#define MAX_SOCKET_RECV_MSG_LEN 1460
 #define MAX_SOCKET_SEND_MSG_LEN 1600
 #define MAX_SOCKET_ONE_SEND_LEN 500
 
@@ -66,6 +67,15 @@ typedef struct
 }SocketType;
 
 
+typedef struct
+{
+   SocketIndexEnum access_id;
+   kal_uint16      msg_len;	
+   gm_soc_event_enum  event_type;   /* soc_event_enum */
+   kal_bool        result;       /* notification result. KAL_TRUE: success, KAL_FALSE: error */
+   kal_int32       detail_cause; /* refer to ps_cause_enum if error_cause is
+                                  * SOC_BEARER_FAIL */
+} gm_soc_notify_at_command_struct;
 
 
 
@@ -159,7 +169,9 @@ void gm_socket_get_host_timer_proc(void);
 
 
 /*在GM_SocketRegisterCallBack 注册的回调函数 gprs_socket_notify 中调用 */
+void gm_socket_close_ok(SocketType *socket);
 void gm_socket_connect_ok(SocketType *socket);
+void gm_socket_send_result(SocketType *socket, bool result);
 void gm_socket_close_for_reconnect(SocketType *socket);
 void gm_socket_destroy(SocketType * socket);
 
@@ -177,6 +189,9 @@ GM_ERRCODE gm_socket_get_ackseq(SocketType *socket, u32 *ack_seq);
 
 void current_get_host_init(void);
 void socket_get_host_by_name_callback(void *msg);
+
+GM_ERRCODE gm_socket_recv_for_at_command(SocketType *socket);
+
 
 
 #endif

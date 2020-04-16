@@ -953,6 +953,20 @@ S32 util_strtol(const char* cp,char** endp)
     return util_strtoul(cp,endp);
 }
 
+
+u32 util_hexstrtoul(const char* cp)
+{
+	u32 result = 0;
+	
+	while(util_isdigit(*cp) || *cp>='a' && *cp<='f' || *cp>='A' && *cp<='F')
+	{
+		result = util_chr(*cp) + result * 16;
+		cp++;
+	}
+	
+	return result;
+}
+
 GM_CHANGE_ENUM util_check_state_change(bool current_state, PStateRecord p_record, U16 true_hold_time_threshold, U16 false_hold_time_threshold)
 {
 	GM_CHANGE_ENUM ret = GM_NO_CHANGE;
@@ -995,6 +1009,149 @@ GM_CHANGE_ENUM util_check_state_change(bool current_state, PStateRecord p_record
 }
 
 
+// 十六进制数据映射表
+const char HexTbl[]={"0123456789ABCDEF"};
 
 
+// 十六进制字符转为数字
+unsigned char HexChar2Number(char hex)
+{
+	unsigned char value = 0;
+	if(hex >= '0' && hex <= '9')
+	{
+		value = hex - '0';	
+	}
+	else if(hex >= 'A' && hex <= 'Z')
+	{
+		value = hex - 'A' + 10;	
+	}
+	else if(hex >= 'a' && hex <= 'z')
+	{
+		value = hex - 'a' + 10;	
+	}
+ 
+	return value;
+}
+
+
+// 两个十六进制字符转为十进制数据
+unsigned char strHex2Byte(char *pHex)
+{
+	unsigned char value;
+	value = HexChar2Number(pHex[0]) << 4;
+	value |= HexChar2Number(pHex[1]);
+	
+	return value;	
+}
+
+
+/**********************************************************
+GSM PDU 7bit字符串解码，由7bit PDU字符串转为ASCII字符串
+"E8329BFD4697D9EC37"----->"hellohello"
+pDst：解码后的ASCII字符串目标指针
+pSrc：解码前的PDU 7bit字符串指针
+返回：解码后的ASCII字符串长度
+***********************************************************/
+int util_pdu_7bit_decoding(char *pDst,char *pSrc)
+{
+	int i;										
+	int Cnt = 0;							   	// 解码后字符串长度
+	unsigned char nLeft = 1;				  	// 左边填充位个数
+	unsigned char fillValue = 0;			 	// 填充的数据
+	unsigned char oldFillValue = 0;			  	// 上一次填充的数据
+ 
+	int srcLength  = GM_strlen(pSrc);			  	// 获得PDU编码长度
+	for(i = 0; i < srcLength; i += 2)
+	{
+		*pDst = strHex2Byte(pSrc);    			// 获取当前字符
+		fillValue = (unsigned char)*pDst;					  	
+		fillValue >>= (8 - nLeft);		 		// 取出编码时填充到该字节的数据
+		*pDst <<= (nLeft -1 );	   				// 左移至原始位置
+		*pDst &= 0x7F;						 	// 去掉最高位
+		*pDst |= oldFillValue;					// 将上一次取出的补位加到末尾		
+		oldFillValue = fillValue;
+		pDst++;								  	// 目标地址加1
+		Cnt++;								  	// 解码长度加1
+		nLeft ++;							  	// 左边填充位个数加1
+		if(nLeft == 8)						  	// 第8个字节将产生一个完全的填充数据
+		{
+			*pDst = oldFillValue;			   	// 直接将该填充数据放到下一个目标地址中
+			pDst++;
+			Cnt++;
+			
+			nLeft = 1;						  	// 复位nLeft，重复以上步骤
+			oldFillValue = 0;
+		} 
+		pSrc += 2;							   	// 源指针向后移两字节
+	}
+	*pDst = '\0';							 	// 目标字符串末尾设为0
+ 
+	return Cnt;		
+}
+
+
+/**********************************************************
+GSM PDU 7bit编码，由ASCII字符串转为编码后的7bit PDU字符串
+"hellohello"----->"E8329BFD4697D9EC37"
+pDst：编码后的目标指针
+pSrc：编码前的ASCII字符串指针
+返回：编码后的字符数据长度
+***********************************************************/
+int util_pdu_7bit_encoding(unsigned char *pDst,char *pSrc)
+{
+	int i;
+	unsigned char hexVlaue;	  					// 保存编码过程中的十六进制数据		
+	unsigned char nLeft;					  	// 左边应填充的位个数
+	unsigned char fillValue;				 	// 用于填充的数据
+	int Cnt = 0;							 	// 编码后数据长度
+	int nSrcLength = GM_strlen(pSrc);			// 源字符串长度
+	
+ 
+	nLeft = 1;								   	// 初始值左边应填充1位
+	for(i = 0; i < nSrcLength; i++)
+	{
+		hexVlaue = *pSrc >> (nLeft - 1);		// 先将当前字符右移相应位;		
+		fillValue = *(pSrc+1) << (8-nLeft);	 	// 取出下一个字符的低位，并从低位移到高位存放到fillValue
+		hexVlaue = hexVlaue | fillValue;		// 将下一个字符的低位补到该字符的高位得到该位的编码
+ 
+		*pDst++ = HexTbl[hexVlaue >> 4];	 	// 将编码后的十六进制转为相应的字符串放到pDst中
+		*pDst++ = HexTbl[hexVlaue & 0x0F];
+		Cnt += 2;							 	// 字符串长度加2
+ 
+		nLeft++;						 		// 左边应填充的位个数加1
+		if(nLeft == 8) 							// 移动8次后将产生一个空字符0x00，实为8个字节数据转为7字节数据
+		{
+			pSrc++;					 		   	// 跳过该字符
+			i++;							 	
+			nLeft = 1;							// 下次循环将重复前面过程
+		}
+	   										 	
+		pSrc++;									// 源字符串指针移向下一字符
+	}
+	*pDst = '\0';						   		// 字符串末尾设置为0
+	return Cnt;
+}
+
+int util_memmem(char * haystack, int haystacklen, char * needle, int needlelen)
+{
+	int i;
+	int j;
+	
+	for (i = 0; i <= (haystacklen - needlelen); i++)
+	{
+		for (j = 0; j < needlelen; j++)
+		{
+			if (haystack[i + j] != needle[j])
+			{
+				break;
+			}
+		}
+		
+		if (j >= needlelen)
+		{
+			return i;
+		}
+	}
+	return -1;
+}
 

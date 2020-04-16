@@ -11,6 +11,10 @@
 #include "hard_ware.h"
 #include "gm_timer.h"
 #include "system_state.h"
+#include "at_command.h"
+#include "hard_ware.h"
+#include "recorder.h"
+#include "gps_save.h"
 
 static SocketType s_file_socket= {-1,"",SOCKET_STATUS_MAX,};
 static UpdateFileExtend s_file_extend;
@@ -241,12 +245,19 @@ GM_ERRCODE update_filemod_destroy(void)
 {
     if(s_file_extend.use_new_socket)
     {
-        if(s_file_socket.id >=0)
-        {
-            GM_SocketClose(s_file_socket.id);
-            s_file_socket.id=-1;
-        }
-
+    	if(s_file_socket.id >=0)
+    	{
+    		if (hard_ware_is_at_command())
+	    	{
+	    		at_command_close_connect(s_file_socket.access_id);
+	    	}
+			else
+			{
+				GM_SocketClose(s_file_socket.id);
+				s_file_socket.id=-1;
+			}
+    	}
+		
         //必须重新create
         fifo_delete(&s_file_socket.fifo);
         update_filemod_transfer_status(SOCKET_STATUS_ERROR);
@@ -275,7 +286,7 @@ GM_ERRCODE update_filemod_timer_proc(void)
     case SOCKET_STATUS_WORK:
         update_filemod_work_proc();
         break;
-    // 没有 SOCKET_STATUS_ERROR 状态,因为进该状态就会调update_service_destroy
+    // 没有 SOCKET_STATUS_ERROR 状�?因为进该状态就会调update_service_destroy
     //case SOCKET_STATUS_ERROR:
         //break;
     default:
@@ -330,6 +341,13 @@ void update_filemod_connection_failed(void)
     // else do nothing . wait connecting proc to deal.
 }
 
+
+void update_filemod_close_ok(void)
+{
+
+}
+
+
 void update_filemod_connection_ok(void)
 {
     update_filemod_transfer_status(SOCKET_STATUS_WORK);
@@ -369,10 +387,20 @@ static void update_filemod_work_proc(void)
 {
     u8 one_send = 1;
     u32 current_time = util_clock();
+	gm_lte_cell_info_struct p_cell_info = {0};
+	
     if((current_time - s_file_socket.send_time) > MESSAGE_TIME_OUT)
     {
         s_file_socket.status_fail_count ++;
-        one_send = (STREAM_TYPE_DGRAM == config_service_update_socket_type())? UPDATE_MAX_PACK_ONE_SEND: UPDATE_MAX_PACK_ONE_SEND;
+		
+		if (hard_ware_is_at_command() && GM_SUCCESS == gsm_get_lte_cell_info(&p_cell_info))
+		{
+			one_send = UPDATE_MAX_PACK_ONE_SEND2;
+		}
+		else
+		{
+			one_send = UPDATE_MAX_PACK_ONE_SEND;
+		}
         
         if(s_file_socket.status_fail_count >= (MAX_MESSAGE_REPEAT * one_send))
         {
@@ -498,7 +526,7 @@ void update_msg_pack_request(u8 *pdata, u16 *idx, u16 len)
     (*idx) += copy_len_fix;
 
     
-    /*u8 termianl_version[20]; //终端当前版本号 */
+    /*u8 termianl_version[20]; //终端当前版本�?*/
     copy_len_fix = copy_len = 20;
     GM_memset(pdata+(*idx),0, copy_len);
     copy_len= (config_service_get_length(CFG_TERM_VERSION, TYPE_STRING) > copy_len)?copy_len:
@@ -507,7 +535,7 @@ void update_msg_pack_request(u8 *pdata, u16 *idx, u16 len)
     (*idx) += copy_len_fix;
 
 
-    /*u8 terminal_version_check[10]; //终端当前版本校验码 */
+    /*u8 terminal_version_check[10]; //终端当前版本校验�?*/
     copy_len_fix = copy_len = 10;
     GM_memset(pdata+(*idx),0, copy_len);
 
@@ -517,7 +545,7 @@ void update_msg_pack_request(u8 *pdata, u16 *idx, u16 len)
     {
         checksum = update_filemod_get_checksum(UPDATE_TARGET_IMAGE);
     }
-    else  // UPDATE_MINOR_IMAGE 肯定存在, 否则不可能运行
+    else  // UPDATE_MINOR_IMAGE 肯定存在, 否则不可能运�?
     {
         checksum = update_filemod_get_checksum(UPDATE_MINOR_IMAGE);
     }
@@ -526,7 +554,7 @@ void update_msg_pack_request(u8 *pdata, u16 *idx, u16 len)
     (*idx) += copy_len_fix;
 
     
-    /*u8 terminal_boot_check[10]; //终端当前版本BOOT校验码 */
+    /*u8 terminal_boot_check[10]; //终端当前版本BOOT校验�?*/
     copy_len_fix = copy_len = 10;
     GM_memset(pdata+(*idx),0, copy_len);
     copy_len= (config_service_get_length(CFG_TERM_BOOT_CHECK, TYPE_STRING) > copy_len)?copy_len:
@@ -546,8 +574,8 @@ void update_msg_receive(SocketType *socket)
     static u32 packet_error_start = 0;
 
     /*
-    update协议   最短7
-        信息头(0x68 0x68)    2 协议号1    包长度2(下一字节至data_end)         check2 0xD
+    update协议   最�?
+        信息�?0x68 0x68)    2 协议�?    包长�?(下一字节至data_end)         check2 0xD
     */
 
     if(GM_SUCCESS != fifo_peek(&socket->fifo, head, len))
@@ -641,7 +669,7 @@ static void update_msg_parse(u8 *pdata, u16 len)
         return;
     }
     
-    //协议号
+    //协议�?
     switch(pdata[2])
     {
         case PROTOCCOL_UPDATE_RESPONSE:
@@ -737,13 +765,21 @@ static void update_msg_parse_response(u8 *pdata, u16 len)
 
 static void update_msg_parse_file_data(u8 *pdata, u16 len)
 {
-    u16 current_idx = 0;  //从s_file_extend.block_current计, 第 几个. [0-9]
+    u16 current_idx = 0;  //从s_file_extend.block_current�? �?几个. [0-9]
     u16 block_number;
     u32 check_bit = 0x01;
     GM_ERRCODE ret = GM_SUCCESS;
-    
+    gm_lte_cell_info_struct p_cell_info = {0};
     u8 one_send = 1;
-    one_send = (STREAM_TYPE_DGRAM == config_service_update_socket_type())? UPDATE_MAX_PACK_ONE_SEND: UPDATE_MAX_PACK_ONE_SEND;
+	
+	if (hard_ware_is_at_command() && GM_SUCCESS == gsm_get_lte_cell_info(&p_cell_info))
+	{
+		one_send = UPDATE_MAX_PACK_ONE_SEND2;
+	}
+	else
+	{
+		one_send = UPDATE_MAX_PACK_ONE_SEND;
+	}
     
     block_number = MKWORD(pdata[13], pdata[14]);
     if(block_number < s_file_extend.block_current)
@@ -761,12 +797,12 @@ static void update_msg_parse_file_data(u8 *pdata, u16 len)
         {
             return;
         }
-        //else 最后一个包要触发下一批请求
+        //else 最后一个包要触发下一批请�?
     }
 
     /*
     2字节 1字节 2字节 8字节 N字节 1字节 1字节
-    包头  命令字   报文长度    终端ID    数据内容    校验  结束符
+    包头  命令�?  报文长度    终端ID    数据内容    校验  结束�?
     0x68 0x68   CMD LEN ID  DATA    CHK 0x0D
     */
     ret = update_msg_parse_one_block(block_number, &pdata[15], len - 17);
@@ -818,6 +854,33 @@ static GM_ERRCODE update_msg_parse_one_block(u16 block, u8 *pdata, u16 data_len)
 }
 
 
+void update_file_send_result(bool result)
+{	
+	if (result)
+	{
+		switch(s_file_extend.send_cmd_serial)
+		{
+			case PROTOCCOL_UPDATE_REQUEST_FILE:
+			case PROTOCCOL_UPDATE_REPORT:
+				s_file_socket.send_time = util_clock();
+				break;
+		}
+	}
+	else
+	{
+		switch(s_file_extend.send_cmd_serial)
+		{
+			case PROTOCCOL_UPDATE_REQUEST_FILE:
+				s_file_extend.result = REPORT_RESULT_FAILED;
+	            GM_strncpy((char *)s_file_extend.result_info, "request blocks fail(data_block_request).", sizeof(s_file_extend.result_info));
+	            update_filemod_destroy();
+				break;
+		}
+	}
+}
+
+
+
 static void update_msg_pack_file_request(u8 *pdata, u16 *idx, u16 len, u16 current)
 {
     if((*idx) + 14> len)
@@ -840,11 +903,20 @@ GM_ERRCODE update_msg_send_data_block_request(SocketType *socket)
     u8 buff[30];
     u16 len = sizeof(buff);
     u16 idx = 0, idx_save = 0;  //current place
-    u16 current_block = 0; //从0一直到 s_file_extend.total_blocks
-    u16 current_idx = 0;  //从s_file_extend.block_current计, 第 几个. [0-9]
+    u16 current_block = 0; //�?一直到 s_file_extend.total_blocks
+    u16 current_idx = 0;  //从s_file_extend.block_current�? �?几个. [0-9]
     u8 one_send = 1;
+    GM_ERRCODE ret;
+	gm_lte_cell_info_struct p_cell_info = {0};
 
-    one_send = (STREAM_TYPE_DGRAM == config_service_update_socket_type())? UPDATE_MAX_PACK_ONE_SEND: UPDATE_MAX_PACK_ONE_SEND;
+	if (hard_ware_is_at_command() && GM_SUCCESS == gsm_get_lte_cell_info(&p_cell_info))
+	{
+		one_send = UPDATE_MAX_PACK_ONE_SEND2;
+	}
+	else
+	{
+		one_send = UPDATE_MAX_PACK_ONE_SEND;
+	}
     update_msg_pack_head(buff, &idx, len);  //13 bytes
     idx_save = idx; // save idx
     
@@ -861,7 +933,7 @@ GM_ERRCODE update_msg_send_data_block_request(SocketType *socket)
             {
                 continue;
             }
-            //else 最后一个包要触发下一批请求
+            //else 最后一个包要触发下一批请�?
         }
 
         idx = idx_save;  // restore idx for each block
@@ -875,11 +947,13 @@ GM_ERRCODE update_msg_send_data_block_request(SocketType *socket)
         LOG(DEBUG,"clock(%d) update_msg_send_data_block_request len(%d) current_block(%d|%d|%x).",
             util_clock(),len,current_block,s_file_extend.block_current,s_file_extend.block_status);
 
-        if(GM_SUCCESS == gm_socket_send(socket, buff, len))
+		s_file_extend.send_cmd_serial = PROTOCCOL_UPDATE_REQUEST_FILE;
+		ret = gm_socket_send(socket, buff, len);
+        if(GM_SUCCESS == ret)
         {
             socket->send_time = util_clock();
         }
-        else
+        else if (GM_MEM_NOT_ENOUGH != ret)
         {
             s_file_extend.result = REPORT_RESULT_FAILED;
             GM_strncpy((char *)s_file_extend.result_info, "request blocks fail(data_block_request).", sizeof(s_file_extend.result_info));
@@ -887,6 +961,10 @@ GM_ERRCODE update_msg_send_data_block_request(SocketType *socket)
             return GM_SYSTEM_ERROR;
         }
     }
+    /*if (hard_ware_is_at_command())
+    {
+    	at_command_sock_recvive(socket->access_id);
+    }*/
     return GM_UNKNOWN;
 }
 
@@ -896,9 +974,17 @@ void update_msg_start_data_block_request(SocketType *socket)
     GM_ERRCODE ret;
     int sys_error;
     bool bret = false;
+	gm_lte_cell_info_struct p_cell_info = {0};
     
     //init block status before sending messages.
-    s_file_extend.block_size = UPDATE_PAKET_MAX_LEN;
+    if (hard_ware_is_at_command() && GM_SUCCESS == gsm_get_lte_cell_info(&p_cell_info))
+    {
+    	s_file_extend.block_size = UPDATE_PAKET_MAX_LEN2;
+    }
+    else
+    {
+    	s_file_extend.block_size = UPDATE_PAKET_MAX_LEN;
+    }
     s_file_extend.block_status = 0;
     s_file_extend.result = REPORT_RESULT_FAILED;
     s_file_extend.result_info[0] = 0;
@@ -917,7 +1003,7 @@ void update_msg_start_data_block_request(SocketType *socket)
         s_file_extend.block_current,s_file_extend.block_status);
     
     
-    //从文件中读取上一次的s_file_extend, 与这次的比较, 如果相同, 就用上次的. 实现断点续传.
+    //从文件中读取上一次的s_file_extend, 与这次的比较, 如果相同, 就用上次�? 实现断点续传.
     ret = update_filemod_state_file_load();
     if(GM_SUCCESS == ret)
     {
@@ -956,7 +1042,7 @@ void update_msg_start_data_block_request(SocketType *socket)
         if(GM_SUCCESS != ret)
         {
             s_file_extend.result = REPORT_RESULT_FAILED;
-			GM_snprintf((char *)s_file_extend.result_info, sizeof(s_file_extend.result_info),"create file fail(!same).errcode=%d,%d", ret,sys_error);
+			GM_snprintf((char *)s_file_extend.result_info, sizeof(s_file_extend.result_info),"create file fail(!same).errcode=%d,%d,filelen(%u)", ret,sys_error,s_file_extend.total_len);
             update_filemod_destroy();
             return;
         }
@@ -970,7 +1056,7 @@ void update_msg_start_data_block_request(SocketType *socket)
     {
         if(GM_SUCCESS != update_filemod_file_open())
         {
-            //打不开文件, 删除状态文件重新开始
+            //打不开文件, 删除状态文件重新开�?
             LOG(WARN,"clock(%d) update_msg_start_data_block_request open() failed, redo update.", util_clock());
 
             util_delete_file(UPDATE_UPGRADE_STATE_FILE);
@@ -1002,15 +1088,23 @@ void update_msg_start_data_block_request(SocketType *socket)
 
 static void update_msg_parse_check_block_bits(u16 block)
 {
-    u16 current_idx = 0;  //从s_file_extend.block_current计, 第 几个. [0-9]
+    u16 current_idx = 0;  //从s_file_extend.block_current�? �?几个. [0-9]
     u32 check_bit = 0x01;
     u8 one_send = 1;
+	gm_lte_cell_info_struct p_cell_info = {0};
 
     current_idx = block - s_file_extend.block_current;
     if(current_idx) check_bit=check_bit << current_idx;
 
     s_file_extend.block_status = s_file_extend.block_status | check_bit;
-    one_send = (STREAM_TYPE_DGRAM == config_service_update_socket_type())? UPDATE_MAX_PACK_ONE_SEND: UPDATE_MAX_PACK_ONE_SEND;
+	if (hard_ware_is_at_command() && GM_SUCCESS == gsm_get_lte_cell_info(&p_cell_info))
+	{
+		one_send = UPDATE_MAX_PACK_ONE_SEND2;
+	}
+	else
+	{
+		one_send = UPDATE_MAX_PACK_ONE_SEND;
+	}
 
     for(current_idx = 0; current_idx < one_send; ++ current_idx)
     {
@@ -1057,10 +1151,10 @@ static void update_msg_parse_check_block_bits(u16 block)
         LOG(INFO,"clock(%d) update_msg_parse_check_block_bits allok(%d) one_send(%d).",
             util_clock(), s_file_extend.block_current, one_send);
 
-        //写断点续传信息
+        //写断点续传信�?
         update_filemod_state_file_save();
 
-        //接着请求后续包
+        //接着请求后续�?
         update_service_after_blocks_finish();
     }
 }
@@ -1174,10 +1268,15 @@ static GM_ERRCODE update_filemod_file_create(u32 fs_len, int *sys_error)
         ret = GM_FS_Write(s_file_extend.handle, (void *)byte, will_write, &writen);
         if ((ret < 0) || (writen==0))
         {
-            LOG(DEBUG,"clock(%d) update_filemod_file_create assert(GM_FS_Write(ret:%d, writen:%d)) failed.", util_clock(), ret, writen);
+            LOG(ERROR,"clock(%d) update_filemod_file_create assert(GM_FS_Write(ret:%d, writen:%d)) failed.", util_clock(), ret, writen);
             GM_FS_Close(s_file_extend.handle);
             s_file_extend.handle = -1;
             *sys_error = s_file_extend.handle;
+            //delete recorder file and his file when memory not enough
+            #ifdef _SW_SUPPORT_RECORD_
+            delete_recorder_file();
+            #endif
+            util_delete_file(GOOME_HIS_FILE);
             return GM_SYSTEM_ERROR;
         }
         writen_total += writen;
@@ -1276,6 +1375,7 @@ GM_ERRCODE update_msg_send_result_to_server(SocketType *socket)
 
     LOG(DEBUG,"clock(%d) update_msg_send_result_to_server len(%d) result(%d).",util_clock(),len,s_file_extend.result);
 
+	s_file_extend.send_cmd_serial = PROTOCCOL_UPDATE_REPORT;
     if(GM_SUCCESS == (ret = gm_socket_send(socket, buff, len)))
     {
         socket->send_time = util_clock();
@@ -1303,7 +1403,7 @@ GM_ERRCODE update_msg_send_result_to_server(SocketType *socket)
         }
         else
         {
-            //失败太多次数了, 估计后面也是失败, 没必要增加服务器压力.
+            //失败太多次数�? 估计后面也是失败, 没必要增加服务器压力.
             update_service_finish(UPDATE_PING_TIME);
         }
     }
@@ -1367,8 +1467,8 @@ static bool is_update_file_extend_same(UpdateFileExtend *e1, UpdateFileExtend *e
     LOG(INFO,"clock(%d) is_update_file_extend_same same file start from:%d.", util_clock(), e2->block_current);
 
     //相同的情况下, 用旧的block_current
-    e1->block_current = e2->block_current; //当前包序号
-    e1->block_status = e2->block_status; // 从低到高, 每一位代表从当前包开始,往后的回收情况,收到回包为1,未收到为0
+    e1->block_current = e2->block_current; //当前包序�?
+    e1->block_status = e2->block_status; // 从低到高, 每一位代表从当前包开�?往后的回收情况,收到回包�?,未收到为0
     return true;
 }
 
@@ -1384,7 +1484,7 @@ static GM_ERRCODE update_filemod_state_file_save(void)
     int idx;
     char *pbuf = (char *)&s_file_extend;
 
-    // 由于要断点续传,所以收到的包要写到了文件系统中.
+    // 由于要断点续�?所以收到的包要写到了文件系统中.
     GM_FS_Commit(s_file_extend.handle);
 
     s_file_extend.state_sum = 0;

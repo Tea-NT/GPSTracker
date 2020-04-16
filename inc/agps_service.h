@@ -69,8 +69,8 @@ GM_ERRCODE agps_service_destroy(void);
  * Others:	   1秒钟调用1次
  */
 GM_ERRCODE agps_service_timer_proc(void);
-
-
+void agps_service_close_ok(void);
+void agps_service_send_result(bool result);
 void agps_service_connection_failed(void);
 void agps_service_connection_ok(void);
 void agps_service_close_for_reconnect(void);

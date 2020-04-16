@@ -12,6 +12,10 @@
 #define GPS_HEART_MSG_RECEIVE_TIME_OUT 420
 
 
+
+void report_wifi_lbs(void);
+
+
 /**
  * Function:   创建gps_service模块
  * Description:创建gps_service模块
@@ -56,7 +60,8 @@ GM_ERRCODE gps_service_destroy(void);
 GM_ERRCODE gps_service_timer_proc(void);
 
 
-
+void gps_service_close_ok(void);
+void gps_service_send_result(bool result);
 
 //状态处理辅助函数
 void gps_service_connection_ok(void);
@@ -111,6 +116,18 @@ void gps_service_heart_atonce(void);
 
 
 /**
+ * Function:   定位模式改变后，立即触发WIFI定位一次
+ * Description:
+ * Input:	   无
+ * Output:	   无
+ * Return:	   无
+ * Others:	   
+ */
+void gps_service_wifi_atonce(void);
+
+
+
+/**
  * Function:   获取心跳成功次数
  * Description:
  * Input:	   无
@@ -142,6 +159,18 @@ GM_ERRCODE gps_service_send_one_locate(GpsDataModeEnum mode, bool use_lbs);
 
 
 /**
+ * Function:   
+ * Description: 发送一条温度数据
+ * Input:	   无
+ * Output:	   无
+ * Return:	   GM_SUCCESS——成功；其它错误码——失败
+ * Others:	   
+ */
+GM_ERRCODE gps_service_temperature_atonce(void);
+
+
+
+/**
  * Function:   收到指令时, 触发上报基站信息, 
                开机超时未定位, 触发上报基站信息, 
                未开启gps定位时, 定时上报lbs数据
@@ -153,10 +182,26 @@ GM_ERRCODE gps_service_send_one_locate(GpsDataModeEnum mode, bool use_lbs);
  */
 GM_ERRCODE gps_service_push_lbs(void);
 
+
+/**
+ * Function:   收到指令时, 触发上报WIFI信息, 
+               开机超时未定位, 触发上报WIFI信息, 
+               未开启gps定位时, 定时上报WIFI数据
+ * Description:
+ * Input:	   无
+ * Output:	   无
+ * Return:	   GM_SUCCESS——成功；其它错误码——失败
+ * Others:	   
+ */
+GM_ERRCODE gps_service_push_wifi(void);
+
+
+
 typedef enum
 {
     ALARM_NONE = 0,
     ALARM_POWER_OFF = 0x01,      //电源断电报警,
+    ALARM_SOS = 0x02,            //SOS报警,
     ALARM_BATTERY_LOW = 0x03,    //电池低电报警
     ALARM_SHOCK = 0x04,          //震动报警
 	ALARM_MOVE = 0x05,			 //车辆移动报警（使用原位移报警位）
@@ -179,6 +224,15 @@ typedef struct
 }AlarmInfo;
 
 
+
+
+GM_ERRCODE gps_service_push_recorder_response_state(bool start);
+
+
+GM_ERRCODE gps_service_send_one_recorder_file_pack(void *arg);
+
+
+
 /**
  * Function:   发送报警数据
  * Description:
@@ -188,6 +242,18 @@ typedef struct
  * Others:	   
  */
 GM_ERRCODE gps_service_push_alarm(AlarmInfo *alarm);
+
+
+/**
+ * Function:   发送设备状态信息
+ * Description:
+ * Input:	   无
+ * Output:	   无
+ * Return:	   GM_SUCCESS——成功；其它错误码——失败
+ * Others:	   
+ */
+GM_ERRCODE gps_service_report_device_state(void);
+
 
 
 /**
@@ -253,6 +319,29 @@ void gps_service_confirm_gps_cache(SocketType *socket);
  */
 U8* gps_service_get_current_ip(void);
 
+
+/**
+ * Function:   获取最近一次发送的温度值
+ * Description:
+ * Input:	   无
+ * Output:	   无
+ * Return:	   最近一次发送的温度值
+ * Others:	   
+ */
+s8 gps_service_get_last_temperature(void);
+
+
+/**
+ * Function:   设置心跳接收收件
+ * Description:防止从心跳间隔长设置到短时，会导致长时间未收到心跳而重启
+                      180s-->10s，在心跳发送100s后设置，会触发gprs_check_need_reboot工作而重启
+                      在设置心跳时，将心跳时间复位
+ * Input:	   心跳接收时间
+ * Output:	   无
+ * Return:	   GM_ERRCODE， GM_SUCCESS 成功，其余失败
+ * Others:	   
+ */
+GM_ERRCODE gps_service_set_heart_receive_time(u32 time);
 
 #endif
 

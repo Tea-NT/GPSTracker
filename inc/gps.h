@@ -95,10 +95,10 @@ typedef struct
 	U8 signal_intensity_grade;
 
 	//定位精度[0.5,99.9],数值越小精度越高
-	float precision;
+	float hdop;
 
 	//跟踪到的卫星个数
-	U8 satellites;
+	U8 satellites_tracked;
 }GPSData;
 
 
@@ -181,6 +181,17 @@ void gps_on_rcv_uart_data(char* p_data, const U16 len);
  * Others:	   
  */
 GM_ERRCODE gps_power_off(void);
+
+
+/**
+ * Function:   GPS芯片休眠，GSM不进入休眠
+ * Description:
+ * Input:	   无
+ * Output:	   无
+ * Return:	   GM_SUCCESS——成功；其它错误码——失败
+ * Others:	   
+ */
+GM_ERRCODE gps_power_off_nosleep(void);
 
 /**
  * Function:   获取GPS模块状态
@@ -315,5 +326,41 @@ float gps_get_aclr(void);
  * Others:	   
  */
 void gps_write_mtk_cmd(const char* cmd);
+
+
+//GPM : GPS POWER MANAGER
+typedef enum
+{
+    GPM_VALID,
+    GPM_STEP_1,   //上电时GPM处理
+    GPM_STEP_2,   //等待GPS电源打开
+    GPM_STEP_3,   //等待上报时间间隔超时
+}GPSPowerManagerStep;
+
+#define GPS_MAX_WORK_TIME 45
+
+#define GPM_TARGGIT_INTERVL 180
+
+#define GPMFUN(name) gps_power_manager_##name##_opration
+
+void GPMFUN(step2)(void);
+
+void GPMFUN(startup)(void);
+
+void GPMFUN(sleep)(void);
+
+void GPMFUN(wakeup)(void);
+
+void GPMFUN(recreate)(void);
+
+/**
+ * Function:   从最近10秒的历史数据中根据时间和水平精度因子找到一个最优的定位点
+ * Description:时间*0.1+水平精度因子作为选择的标准，最小的为最优
+ * Input:	   p_data——最新的定位点
+ * Output:	   p_data——最优的定位点
+ * Return:	   false——没有找到最优点，使用最新点；true——找到了最优点
+ * Others:	   
+ */
+bool gps_find_optimal_data_by_time_and_hdop(GPSData* p_data);
 #endif
 

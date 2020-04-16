@@ -31,16 +31,33 @@
 #include "gps_service.h"
 
 
+typedef enum
+{
+	TAG_WORK_MODE = 1,
+	TAG_RECORD_STA = 2,
+	TAG_AUTO_RECORD_VOL = 3,
+	TAG_BATTER_PERSENT = 4,
+	TAG_MAX
+}DeviceStateTagEnum;
+
+
 /*idx 是输入输出参数*/
 void protocol_goome_pack_login_msg(u8 *pdata, u16 *idx, u16 len);
 void protocol_goome_pack_iccid_msg(u8 *pdata, u16 *idx, u16 len);
+void protocol_goome_pack_temperature_msg(U8* pdata, u16 *idx, u16 len);
+void protocol_goome_pack_signal_msg(U8* pdata, u16 *idx, u16 len);
 void protocol_goome_pack_heartbeat_msg(u8 *pdata, u16 *idx, u16 len);
 void protocol_goome_pack_remote_ack(u8 *pdata, u16 *idx, u16 len, u8 *pRet, u16 retlen);
 
 struct GPSData;
 void protocol_goome_pack_gps_msg(GpsDataModeEnum mode, const GPSData *gps, u8 *pdata, u16 *idx, u16 len);
 void protocol_goome_pack_lbs_msg(u8 *pdata, u16 *idx, u16 len);
+void protocol_goome_pack_wifi_msg(U8* pdata, u16 *idx, u16 len);
+void protocol_goome_pack_recorder_response_msg(bool start, U8* pdata, u16 *idx, u16 len);
+void protocol_goome_pack_recorder_file_msg(void *arg, U8* pdata, u16 *idx, u16 len);
 void protocol_goome_pack_alarm_msg(AlarmInfo *alarm,u8 *pdata, u16 *idx, u16 len);
+void protocol_goome_pack_position_request_msg(u8 *mobile_num, u8 num_len, u8 *command, u8 cmd_len,u8 *pdata, u16 *idx, u16 len);
+void protocol_goome_pack_device_state_msg(U8* pdata, u16 *idx, u16 len);
 void protocol_goome_pack_position_request_msg(u8 *mobile_num, u8 num_len, u8 *command, u8 cmd_len,u8 *pdata, u16 *idx, u16 len);
 
 

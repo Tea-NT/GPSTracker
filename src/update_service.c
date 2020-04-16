@@ -29,6 +29,9 @@
 #include "utility.h"
 #include "gm_fs.h"
 #include "system_state.h"
+#include "at_command.h"
+#include "hard_ware.h"
+
 
 static SocketType s_update_socket= {-1,"",SOCKET_STATUS_MAX,};
 
@@ -37,6 +40,7 @@ typedef struct
     u8 getting_data;    //是否正在请求数据文件
     u32 last_ok_time;   //上一次执行升级检测的时间
     u32 wait;           //执行升级检测的间隔
+    ProtocolUpdateCmdEnum send_cmd_serial; //AT指令发送时需要等待是否成功，记录发送ID，不同处理方式
 }SocketTypeUpdateExtend;
 
 static SocketTypeUpdateExtend s_update_socket_extend;
@@ -286,6 +290,33 @@ GM_ERRCODE update_service_destroy(void)
 	return GM_SUCCESS;
 }
 
+void update_service_send_result(bool result)
+{	
+	if (result)
+	{
+		switch(s_update_socket_extend.send_cmd_serial)
+		{
+			case PROTOCCOL_UPDATE_REQUEST:
+				s_update_socket.send_time = util_clock();
+				break;
+			default:
+				break;
+		}
+	}
+	else
+	{
+		switch(s_update_socket_extend.send_cmd_serial)
+		{
+			case PROTOCCOL_UPDATE_REQUEST:
+				update_service_finish(UPDATE_PING_TIME);
+				break;
+			default:
+				break;
+		}
+	}
+}
+
+
 SocketStatus update_service_get_status(void)
 {
 	return (SocketStatus)(s_update_socket.status);
@@ -366,21 +397,47 @@ static void update_service_init_proc(void)
 void update_service_connection_failed(void)
 {
     update_service_close();
-    
-    if(s_update_socket.status_fail_count >= MAX_CONNECT_REPEAT)
+
+    if (!hard_ware_is_at_command())
     {
-        // if excuted get_host transfer to error statu, else get_host.
-        if(s_update_socket.excuted_get_host || (s_update_socket.addr[0] == 0))
-        {
-            update_service_finish(UPDATE_PING_TIME);
-        }
-        else
-        {
-            update_service_transfer_status(SOCKET_STATUS_INIT);
-        }
+	    if(s_update_socket.status_fail_count >= MAX_CONNECT_REPEAT)
+	    {
+	        // if excuted get_host transfer to error statu, else get_host.
+	        if(s_update_socket.excuted_get_host || (s_update_socket.addr[0] == 0))
+	        {
+	            update_service_finish(UPDATE_PING_TIME);
+	        }
+	        else
+	        {
+	            update_service_transfer_status(SOCKET_STATUS_INIT);
+	        }
+	    }
     }
     // else do nothing . wait connecting proc to deal.
 }
+
+
+void update_service_close_ok(void)
+{
+	s_update_socket.id=-1;
+   if (SOCKET_STATUS_CONNECTING == s_update_socket.status)
+   {
+		if(s_update_socket.status_fail_count >= MAX_CONNECT_REPEAT)
+	    {
+	        // if excuted get_host transfer to error statu, else get_host.
+	        if(s_update_socket.excuted_get_host || (s_update_socket.addr[0] == 0))
+	        {
+	            update_service_finish(UPDATE_PING_TIME);
+	        }
+	        else
+	        {
+	            update_service_transfer_status(SOCKET_STATUS_INIT);
+	        }
+	    }
+   }
+}
+
+
 
 void update_service_connection_ok(void)
 {
@@ -402,11 +459,18 @@ void update_service_finish(u32 wait)
 
 static void update_service_close(void)
 {
-    if(s_update_socket.id >=0)
-    {
-        GM_SocketClose(s_update_socket.id);
-        s_update_socket.id=-1;
-    }
+	if(s_update_socket.id >=0)
+	{
+		if (hard_ware_is_at_command())
+		{
+			at_command_close_connect(s_update_socket.access_id);
+		}
+		else 
+		{
+			GM_SocketClose(s_update_socket.id);
+			s_update_socket.id=-1;
+		}	
+	}
 }
 
 
@@ -436,8 +500,17 @@ static void update_service_work_proc(void)
 {
     u32 current_time = util_clock();
     u8 one_send = 1;
+	gm_lte_cell_info_struct p_cell_info = {0};
 
-    one_send = (STREAM_TYPE_DGRAM == config_service_update_socket_type())? UPDATE_MAX_PACK_ONE_SEND: UPDATE_MAX_PACK_ONE_SEND;
+	if (hard_ware_is_at_command() && GM_SUCCESS == gsm_get_lte_cell_info(&p_cell_info))
+	{
+		one_send = UPDATE_MAX_PACK_ONE_SEND2;
+	}
+	else
+	{
+		one_send = UPDATE_MAX_PACK_ONE_SEND;
+	}
+	
     if(! s_update_socket_extend.getting_data )
     {
         //发送请求阶段 
@@ -512,6 +585,7 @@ static GM_ERRCODE update_msg_send_request(void)
     u8 buff[100];
     u16 len = sizeof(buff);
     u16 idx = 0;  //current place
+    GM_ERRCODE ret;
 
     update_msg_pack_head(buff, &idx, len);  //13 bytes
     update_msg_pack_request(buff, &idx, len);  //53 bytes
@@ -519,14 +593,15 @@ static GM_ERRCODE update_msg_send_request(void)
 
     len=idx+2;  // 1byte checksum , 1byte 0xD
 
-    
-    if(GM_SUCCESS == gm_socket_send(&s_update_socket, buff, len))
+	s_update_socket_extend.send_cmd_serial =  PROTOCCOL_UPDATE_REQUEST;
+    ret = gm_socket_send(&s_update_socket, buff, len);
+    if(GM_SUCCESS == ret)
     {
         s_update_socket.send_time = util_clock();
         LOG(DEBUG,"clock(%d) update_msg_send_request msglen:%d success", util_clock(), len);
         return GM_SUCCESS;
     }
-    else
+    else if (GM_MEM_NOT_ENOUGH != ret)
     {
         LOG(DEBUG,"clock(%d) update_msg_send_request msglen:%d failed.", util_clock(), len);
         update_service_finish(UPDATE_PING_TIME);

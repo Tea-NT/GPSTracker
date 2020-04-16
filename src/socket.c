@@ -14,6 +14,10 @@
 #include "utility.h"
 #include "gm_system.h"
 #include "system_state.h"
+#include "at_command.h"
+#include "gprs.h"
+#include "hard_ware.h"
+
 
 /*returned by apn register, used when creating socket. */
 static int s_account_id = -1;
@@ -66,6 +70,8 @@ static void init_all_sockets(void);
 static GM_ERRCODE add_to_all_sockets(SocketType *p);
 static void current_get_host_start(SocketType *socket);
 static void gm_socket_connect_failed(SocketType *socket);
+static void gm_socket_recv_command_call_back(s32 result, SocketIndexEnum access_id, u16 recv_len, u8 *recv_data);
+
 
 
 static void init_all_sockets(void)
@@ -350,10 +356,18 @@ GM_ERRCODE gm_socket_get_host_by_name(SocketType *socket, GetHostItem *item)
     item->send_time = util_clock();
     socket->excuted_get_host=1;
     current_get_host_start(socket);
-    
-    GM_GetHostByName(socket->addr, s_account_id, &result);
-	LOG(INFO,"clock(%d) gm_socket_get_host_by_name socket->addr(%s) result(%d).", 
+
+    if (hard_ware_is_at_command())
+    {
+    	at_command_get_host_ip((u8 *)socket->addr, socket_get_host_by_name_callback);
+    }
+    else
+    {
+    	GM_GetHostByName(socket->addr, s_account_id, &result);
+    	LOG(INFO,"clock(%d) gm_socket_get_host_by_name socket->addr(%s) result(%d).", 
 		util_clock(), socket->addr, result);
+    }
+	
     return GM_SUCCESS;
 }
 
@@ -374,6 +388,34 @@ GM_ERRCODE gm_is_valid_ip(const u8*data)
     
     return GM_SUCCESS;
 }
+
+
+void gm_socket_close_ok(SocketType *socket)
+{
+    switch(socket->access_id)
+    {
+    case SOCKET_INDEX_MAIN:
+        gps_service_close_ok();
+        break;
+    case SOCKET_INDEX_EPO: //SOCKET_INDEX_AGPS
+        // udp not need callback
+        agps_service_close_ok();
+        break;
+    case SOCKET_INDEX_LOG:
+        los_service_close_ok();
+        break;
+    case SOCKET_INDEX_UPDATE:
+        update_service_close_ok();
+        break;
+    case SOCKET_INDEX_UPDATE_FILE:
+        update_filemod_close_ok();
+        break;
+    case SOCKET_INDEX_CONFIG:
+        config_service_close_ok();
+        break;
+    }
+}
+
 
 
 
@@ -402,6 +444,33 @@ void gm_socket_connect_ok(SocketType *socket)
         break;
     }
 }
+
+
+void gm_socket_send_result(SocketType *socket, bool result)
+{
+    switch(socket->access_id)
+    {
+    case SOCKET_INDEX_MAIN:
+        gps_service_send_result(result);
+        break;
+    case SOCKET_INDEX_EPO: //SOCKET_INDEX_AGPS
+        agps_service_send_result(result);
+        break;
+    case SOCKET_INDEX_LOG:
+        log_service_send_result(result);
+        break;
+    case SOCKET_INDEX_UPDATE:
+        update_service_send_result(result);
+        break;
+    case SOCKET_INDEX_UPDATE_FILE:
+        update_file_send_result(result);
+        break;
+    case SOCKET_INDEX_CONFIG:
+        config_service_send_result(result);
+        break;
+    }
+}
+
 
 void gm_socket_close_for_reconnect(SocketType *socket)
 {
@@ -475,44 +544,51 @@ GM_ERRCODE gm_socket_connect(SocketType *socket)
     }
 
     socket->send_time = util_clock();
-    socket->id = GM_SocketCreate(s_account_id, socket->type);
-    if (socket->id >= 0)
+    if (hard_ware_is_at_command())
     {
-		GM_snprintf(ip_addr, sizeof(ip_addr), "%d.%d.%d.%d", socket->ip[0], socket->ip[1], socket->ip[2], socket->ip[3]);
-        if (GM_SocketConnect(socket->id, ip_addr, socket->port, s_account_id, 
-			socket->access_id, socket->type))
-        {
-            if(socket->type == STREAM_TYPE_STREAM)
-            {
-                // wait call back
-            }
-            else if(socket->type == STREAM_TYPE_DGRAM)
-            {
-                LOG(INFO,"clock(%d) gm_socket_connect udp(%d.%d.%d.%d:%d) id(%d) access_id(%d) success.", 
-                    util_clock(), socket->ip[0], socket->ip[1], socket->ip[2], socket->ip[3], socket->port, socket->id, socket->access_id);
-                gm_socket_connect_ok(socket);
-            }
-            else
-            {
-                LOG(ERROR,"clock(%d) gm_socket_connect unknown type(%d)(%d.%d.%d.%d:%d).", 
-                    util_clock(), socket->type, socket->ip[0], socket->ip[1], socket->ip[2], socket->ip[3], socket->port);
-				return GM_UNKNOWN;
-            }
-        }
-        else
-        {
-            LOG(INFO,"clock(%d) gm_socket_connect type(%d)(%d.%d.%d.%d:%d) failed.", 
-                util_clock(), socket->type, socket->ip[0], socket->ip[1], socket->ip[2], socket->ip[3], socket->port);
-
-            gm_socket_connect_failed(socket);
-            return GM_UNKNOWN;
-        }
+    	return at_command_open_connect(socket, gprs_socket_notify_by_at_command, gm_socket_recv_command_call_back);
     }
     else
     {
-        LOG(INFO,"clock(%d) gm_socket_connect type(%d)(%d.%d.%d.%d:%d) create failed.", 
-            util_clock(), socket->type, socket->ip[0], socket->ip[1], socket->ip[2], socket->ip[3], socket->port);
-        return GM_UNKNOWN;
+    	socket->id = GM_SocketCreate(s_account_id, socket->type);
+	    if (socket->id >= 0)
+	    {
+			GM_snprintf(ip_addr, sizeof(ip_addr), "%d.%d.%d.%d", socket->ip[0], socket->ip[1], socket->ip[2], socket->ip[3]);
+	        if (GM_SocketConnect(socket->id, ip_addr, socket->port, s_account_id, 
+				socket->access_id, socket->type))
+	        {
+	            if(socket->type == STREAM_TYPE_STREAM)
+	            {
+	                // wait call back
+	            }
+	            else if(socket->type == STREAM_TYPE_DGRAM)
+	            {
+	                LOG(INFO,"clock(%d) gm_socket_connect udp(%d.%d.%d.%d:%d) id(%d) access_id(%d) success.", 
+	                    util_clock(), socket->ip[0], socket->ip[1], socket->ip[2], socket->ip[3], socket->port, socket->id, socket->access_id);
+	                gm_socket_connect_ok(socket);
+	            }
+	            else
+	            {
+	                LOG(ERROR,"clock(%d) gm_socket_connect unknown type(%d)(%d.%d.%d.%d:%d).", 
+	                    util_clock(), socket->type, socket->ip[0], socket->ip[1], socket->ip[2], socket->ip[3], socket->port);
+					return GM_UNKNOWN;
+	            }
+	        }
+	        else
+	        {
+	            LOG(INFO,"clock(%d) gm_socket_connect type(%d)(%d.%d.%d.%d:%d) failed.", 
+	                util_clock(), socket->type, socket->ip[0], socket->ip[1], socket->ip[2], socket->ip[3], socket->port);
+
+	            gm_socket_connect_failed(socket);
+	            return GM_UNKNOWN;
+	        }
+	    }
+	    else
+	    {
+	        LOG(INFO,"clock(%d) gm_socket_connect type(%d)(%d.%d.%d.%d:%d) create failed.", 
+	            util_clock(), socket->type, socket->ip[0], socket->ip[1], socket->ip[2], socket->ip[3], socket->port);
+	        return GM_UNKNOWN;
+	    }
     }
     
     return GM_SUCCESS;
@@ -545,21 +621,86 @@ GM_ERRCODE gm_socket_send(SocketType *socket, u8 *data, u16 len)
     }
     
     //发一部分的没有出现过,发送失败会返回负数
-    gm_socket_get_ackseq(socket, &socket->last_ack_seq);
-    ret = GM_SocketSend(socket->id, (char *)data, len);
-    if (ret != len)
-    {
-        LOG(INFO,"clock(%d) gm_socket_send type(%d)(%d.%d.%d.%d:%d) id(%d) ret(%d)!=len(%d).", 
-            util_clock(), socket->type, socket->ip[0], socket->ip[1], socket->ip[2], socket->ip[3], 
-            socket->port,socket->id,ret,len);
-        
-        return GM_UNKNOWN;
-    }
-    
+    if (hard_ware_is_at_command())
+	{
+		return at_command_socket_send(socket->access_id, data, len);
+	}
+	else
+	{
+		//AT指令不支持获取ack_seq，发送成功直接累加
+		gm_socket_get_ackseq(socket, &socket->last_ack_seq);
+		ret = GM_SocketSend(socket->id, (char *)data, len);
+		if (ret != len)
+		{
+			LOG(INFO,"clock(%d) gm_socket_send type(%d)(%d.%d.%d.%d:%d) id(%d) ret(%d)!=len(%d).", 
+			util_clock(), socket->type, socket->ip[0], socket->ip[1], socket->ip[2], socket->ip[3], 
+			socket->port,socket->id,ret,len);
+			return GM_UNKNOWN;
+		}
+	}
+	
     return GM_SUCCESS;
-
 }
 
+
+static void gm_socket_recv_command_call_back(s32 result, SocketIndexEnum access_id, u16 recv_len, u8 *recv_data)
+{
+	SocketType *socket;
+	GM_ERRCODE ret;
+
+	socket = get_socket_by_accessid(access_id);
+
+	if(recv_len > 0)
+	{
+		LOG(INFO,"clock(%d) gm_socket_recv type(%d)(%d.%d.%d.%d:%d) id(%d) recvlen(%d).", 
+				util_clock(), socket->type, socket->ip[0], socket->ip[1], socket->ip[2], socket->ip[3], 
+				socket->port,socket->id,recv_len);
+	}
+
+	if (recv_len > 0)
+	{
+		gps_service_confirm_gps_cache(socket);
+		ret = fifo_insert(&socket->fifo, recv_data, recv_len);
+		if(ret != GM_SUCCESS)
+		{
+			LOG(ERROR,"clock(%d) fifo insert failed, return(%d)", util_clock(), ret );
+			if(socket->access_id != SOCKET_INDEX_UPDATE)  //update_service 会重发
+			{
+				//socket need rebuild.
+				fifo_reset(&socket->fifo);
+				if(socket->access_id == SOCKET_INDEX_MAIN)
+				{
+					char reason[30];
+					GM_snprintf(reason,sizeof(reason),"fifo_insert return %d", ret);
+					reason[sizeof(reason) - 1] = 0;
+					system_state_set_gpss_reboot_reason(reason);
+				}
+				gm_socket_close_for_reconnect(socket);
+				return;
+			}
+		}
+		if (recv_len >= MAX_SOCKET_RECV_MSG_LEN)
+		{
+			at_command_sock_recvive(socket->access_id);
+		}
+	}
+}
+
+
+GM_ERRCODE gm_socket_recv_for_at_command(SocketType *socket)
+{
+	if(socket->status <= SOCKET_STATUS_CONNECTING || socket->status >= SOCKET_STATUS_DATA_FINISH)
+    {
+        LOG(ERROR,"clock(%d) gm_socket_recv_for_at_command status(%d) error. type(%d)(%d.%d.%d.%d:%d) id(%d).", 
+            util_clock(), socket->status, socket->type, socket->ip[0], socket->ip[1], socket->ip[2], socket->ip[3], 
+            socket->port,socket->id);
+        return GM_ERROR_STATUS;
+    }
+
+	at_command_sock_recvive(socket->access_id);
+
+    return GM_SUCCESS;
+}
 
 
 GM_ERRCODE gm_socket_recv(SocketType *socket)

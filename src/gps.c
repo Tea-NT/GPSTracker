@@ -45,6 +45,8 @@
 #include "gsm.h"
 #include "utility.h"
 #include "gps_kalman_filter.h"
+#include "wifi.h"
+#include "auto_test.h"
 
 
 
@@ -95,6 +97,8 @@ typedef struct
 	CircularQueue gps_lng_queue;
 	CircularQueue gps_speed_queue;
 	CircularQueue gps_course_queue;
+	CircularQueue gps_hdop_queue;
+	CircularQueue gps_satellites_queue;
 
 	//启动时间
 	time_t power_on_time;
@@ -179,6 +183,10 @@ typedef struct
 	StateRecord over_speed_alarm_state;
 	
     u8 gps_recovery_flg;
+
+    GPSPowerManagerStep gpm_step;
+
+    u8 gpm_send_flg;
 }Gps,*PGps;
 
 static Gps s_gps;
@@ -244,8 +252,7 @@ static void reopen_gps(void);
 
 static void request_write_time(void);
 
-
-
+#define GPM_OPEN_INTERVAL 180
 
 
 GM_ERRCODE gps_create(void)
@@ -257,6 +264,8 @@ GM_ERRCODE gps_create(void)
 	circular_queue_create(&s_gps.gps_lng_queue, GPS_BUFF_LEN, GM_QUEUE_TYPE_FLOAT);
 	circular_queue_create(&s_gps.gps_speed_queue, GPS_BUFF_LEN, GM_QUEUE_TYPE_FLOAT);
 	circular_queue_create(&s_gps.gps_course_queue, GPS_BUFF_LEN, GM_QUEUE_TYPE_FLOAT);
+	circular_queue_create(&s_gps.gps_hdop_queue, GPS_BUFF_LEN, GM_QUEUE_TYPE_FLOAT);
+	circular_queue_create(&s_gps.gps_satellites_queue, GPS_BUFF_LEN, GM_QUEUE_TYPE_INT);
 
 	return GM_SUCCESS;
 }
@@ -268,6 +277,8 @@ GM_ERRCODE gps_destroy(void)
 	circular_queue_destroy(&s_gps.gps_lng_queue, GM_QUEUE_TYPE_FLOAT);
 	circular_queue_destroy(&s_gps.gps_speed_queue, GM_QUEUE_TYPE_FLOAT);
 	circular_queue_destroy(&s_gps.gps_course_queue, GM_QUEUE_TYPE_FLOAT);
+	circular_queue_destroy(&s_gps.gps_hdop_queue, GM_QUEUE_TYPE_FLOAT);
+	circular_queue_destroy(&s_gps.gps_satellites_queue, GM_QUEUE_TYPE_INT);
 	return GM_SUCCESS;
 }
 
@@ -317,7 +328,7 @@ static void clear_data(void)
 	s_gps.over_speed_alarm_state.true_state_hold_seconds = 0;
 	s_gps.over_speed_alarm_state.false_state_hold_seconds = 0;
 	
-	GM_memset(&s_gps.frame_ver, 0, sizeof(NMEASentenceRMC));
+	GM_memset(&s_gps.frame_ver, 0, sizeof(NMEASentenceVER));
 	GM_memset(&s_gps.frame_rmc, 0, sizeof(NMEASentenceRMC));
 	GM_memset(&s_gps.frame_gga, 0, sizeof(NMEASentenceGGA));
 	GM_memset(&s_gps.frame_gst, 0, sizeof(NMEASentenceGST));
@@ -331,14 +342,18 @@ GM_ERRCODE gps_power_on(bool push_data_enbale)
 {
 	GM_ERRCODE ret = GM_SUCCESS;
 	bool gps_close = false;
+	u8 work_mode;
+
+	uart_open_port(GM_UART_DEBUG,BAUD_RATE_HIGH,0);
+	hard_ware_awake();
 
 	config_service_get(CFG_GPS_CLOSE, TYPE_BOOL, &gps_close, sizeof(gps_close));
-    
-	if (gps_close)
+	config_service_get(CFG_WORKMODE, TYPE_BYTE, &work_mode, sizeof(work_mode));
+    if ((work_mode != 0 && hard_ware_is_device_w()) || gps_close)
 	{
+		led_set_gps_state(GM_LED_OFF);
 		return GM_SUCCESS;
 	}
-
 	
 	if (GM_GPS_OFF != s_gps.state)
 	{
@@ -352,9 +367,7 @@ GM_ERRCODE gps_power_on(bool push_data_enbale)
 
 	s_gps.push_data_enbale = push_data_enbale;
 
-	//先打开调试串口
-	uart_open_port(GM_UART_DEBUG,BAUD_RATE_HIGH,0);
-	GM_SysMsdelay(10);
+	
 
 	s_gps.state = GM_GPS_FIX_NONE;
 	led_set_gps_state(GM_LED_FLASH);
@@ -434,7 +447,7 @@ GM_ERRCODE gps_power_on(bool push_data_enbale)
 		
 	}
 
-    hard_ware_awake();
+    
 	
 	GM_StartTimer(GM_TIMER_GPS_CHECK_RECEIVED, TIM_GEN_1SECOND*10, check_has_received_data);
 	GM_StartTimer(GM_TIMER_GPS_CHECK_STATE, TIM_GEN_1SECOND*60, check_fix_state);
@@ -444,16 +457,271 @@ GM_ERRCODE gps_power_on(bool push_data_enbale)
 	return hard_ware_open_gps();
 }
 
+void GPMFUN(step3)(void)
+{
+    u32 cur_time = util_clock();
+
+    if(s_gps.gpm_step == GPM_STEP_3)
+    {
+        GM_StopTimer(GM_TIMER_GPM); 
+        
+        if(gps_get_state() == GM_GPS_OFF)gps_power_on(true);
+
+        LOG(INFO,"clock(%d) GPM step3 open GPS,turn off GPS power after %d s",util_clock(),GPS_MAX_WORK_TIME);
+
+        GM_StartTimer(GM_TIMER_GPM, GPS_MAX_WORK_TIME * TIM_GEN_1SECOND, GPMFUN(step2));
+
+        s_gps.gpm_step = GPM_STEP_2;
+    }
+    else
+    {
+        LOG(ERROR,"clock(%d) GPM cur step %d need step %d,always open gps.",util_clock(),s_gps.gpm_step,GPM_STEP_2);
+        //gps_power_on(true);
+    }
+}
+
+void GPMFUN(step2)(void)
+{
+    u16 interval,timeout = 0;
+
+    u32 cur_time = util_clock();
+
+    GM_StopTimer(GM_TIMER_GPM);
+
+    if(s_gps.gpm_step != GPM_VALID)
+    {
+        if(!gps_is_fixed() ||  s_gps.gpm_send_flg || VEHICLE_STATE_STATIC == system_state_get_vehicle_state())
+        {
+            s_gps.gpm_send_flg = 0;
+            
+            if(gps_get_state() != GM_GPS_OFF)gps_power_off_nosleep();
+
+            config_service_get(CFG_UPLOADTIME,TYPE_SHORT,&interval,sizeof(interval));
+
+            timeout = (interval - GPS_MAX_WORK_TIME);
+
+            LOG(INFO,"clock(%d) GPM step2 close GPS,turn on GPS power after %d s",util_clock(),timeout);
+
+            GM_StartTimer(GM_TIMER_GPM, timeout * TIM_GEN_1SECOND, GPMFUN(step3));
+
+            s_gps.gpm_step = GPM_STEP_3;
+        }
+        else
+        {
+            LOG(INFO,"clock(%d) GPM step2 GPS fixed ,check step2 after 10 s",util_clock());
+            
+            GM_StartTimer(GM_TIMER_GPM, 10 * TIM_GEN_1SECOND, GPMFUN(step2));
+
+            s_gps.gpm_step = GPM_STEP_2;
+        }
+        
+    }    
+}
+
+void GPMFUN(step1)(void)
+{
+    u16 interval,timeout,remining;
+    
+    u32 cur_time = util_clock();
+    
+    if(s_gps.gpm_step == GPM_STEP_1)
+    {
+        GM_StopTimer(GM_TIMER_GPM); 
+        
+        config_service_get(CFG_UPLOADTIME,TYPE_SHORT,&interval,sizeof(interval));
+
+        remining = cur_time%interval;
+
+        /*
+           0              intreval1              intreval2
+           |--------|---------|--------|--------------|
+                    |                  |
+                   180                180
+         */  
+        /*interval1 - remining1 : timeout = interval - remining1*/
+        if(interval < 180)
+        {
+            timeout = 2*interval - remining;
+        }
+        else
+        {
+            timeout = interval - remining;
+        }
+
+        LOG(INFO,"clock(%d) GPM reming %d, turn off GPS power after %d s",util_clock(),remining,timeout);
+
+        GM_StartTimer(GM_TIMER_GPM, timeout * TIM_GEN_1SECOND, GPMFUN(step2));
+
+        s_gps.gpm_step = GPM_STEP_2;
+        
+    }
+    else
+    {
+        LOG(ERROR,"clock(%d) GPM cur step %d need step %d,always open GPS.",util_clock(),s_gps.gpm_step,GPM_STEP_1);
+        
+        //gps_power_on(true);
+    }
+}
+
+void GPMFUN(sleep)(void)
+{
+    GM_StopTimer(GM_TIMER_GPM); 
+
+    if(s_gps.gpm_step != GPM_VALID)
+    {
+        if(gps_get_state() != GM_GPS_OFF)gps_power_off();
+        LOG(INFO,"clock(%d) GPM sleep...",util_clock());
+        //s_gps.gpm_step = GPM_STEP_2;
+    }
+
+}
+
+
+void GPMFUN(wakeup)(void)
+{
+    u16 interval,timeout = 0;
+
+    u32 cur_time = util_clock();
+    
+    GM_StopTimer(GM_TIMER_GPM);
+
+    if(s_gps.gpm_step != GPM_VALID)
+    {
+        config_service_get(CFG_UPLOADTIME,TYPE_SHORT,&interval,sizeof(interval));
+
+        /*
+        rep    inerval1   interval2
+        |          |          |
+        |----|-----|----|-----|
+             |     |    |
+            cur1  cur2 cur3
+        */
+        /*cur1: timeout =  interval - (cur1 - rep) + intreval2*/
+        if(cur_time - s_gps.report_time < interval)
+        {
+            timeout = 2*interval - (cur_time - s_gps.report_time);
+        }
+        /*cur2 : timeout = interval*/
+        else if(cur_time - s_gps.report_time == interval)
+        {
+            timeout = interval;
+        }
+        /*cur3 : timeout = ((cur3 - rep)/interval)*interval - cur3 + interval*/
+        else
+        {
+            //timeout = ((cur_time - s_gps.report_time)/interval)*interval - cur_time + interval;
+            timeout = ((cur_time - s_gps.report_time)/interval + 2)*interval - (cur_time - s_gps.report_time);
+        }
+
+        LOG(INFO,"clock(%d) GPM wakeup open GPS,turn off GPS power after %d s",util_clock(),timeout);
+
+        GM_StartTimer(GM_TIMER_GPM, timeout * TIM_GEN_1SECOND, GPMFUN(step3));
+
+        s_gps.gpm_step = GPM_STEP_3;
+    }
+}
+
+void GPMFUN(startup)(void)
+{
+    u16 interval,device_id = 0;
+
+    config_service_get(CFG_DEVICETYPE, TYPE_SHORT, &device_id, sizeof(U16));
+
+    config_service_get(CFG_UPLOADTIME,TYPE_SHORT,&interval,sizeof(interval));
+
+    ///config_service_get(CFG_GPM_INTERVAL,TYPE_SHORT,&gpm_interval,sizeof(U16));
+
+    GM_StopTimer(GM_TIMER_GPM);
+
+    s_gps.gpm_step = GPM_VALID;
+
+    if(interval >= GPM_OPEN_INTERVAL && device_id <= DEVICE_W18 && device_id >= DEVICE_W1)
+    {
+        s_gps.gpm_step = GPM_STEP_1;
+
+        LOG(INFO,"clock(%d) GPM start up...",util_clock());
+
+        GPMFUN(step1)();
+    }
+    else
+    {
+        LOG(INFO,"clock(%d) GPM close...",util_clock());
+        s_gps.gpm_step = GPM_VALID;
+    }
+    
+}
+
+void GPMFUN(recreate)(void)
+{
+    u16 interval,device_id,timeout= 0;
+
+    config_service_get(CFG_DEVICETYPE, TYPE_SHORT, &device_id, sizeof(U16));
+
+    config_service_get(CFG_UPLOADTIME,TYPE_SHORT,&interval,sizeof(interval));
+
+    //config_service_get(CFG_GPM_INTERVAL,TYPE_SHORT,&gpm_interval,sizeof(U16));
+
+    GM_StopTimer(GM_TIMER_GPM);
+
+    s_gps.gpm_step = GPM_VALID;
+
+    if(interval > GPM_OPEN_INTERVAL && device_id <= DEVICE_W18 && device_id >= DEVICE_W1)
+    {
+        s_gps.gpm_step = GPM_STEP_2;
+
+        timeout = interval;
+
+        if(gps_get_state() == GM_GPS_OFF)gps_power_on(true);
+
+        LOG(INFO,"clock(%d) GPM recreate open gps,turn off GPS power after %d s",util_clock(),timeout);
+
+        GM_StartTimer(GM_TIMER_GPM, timeout * TIM_GEN_1SECOND, GPMFUN(step2));
+    }
+    else
+    {
+        if(gps_get_state() == GM_GPS_OFF)gps_power_on(true);
+        LOG(INFO,"clock(%d) GPM close and turn on gps power",util_clock());
+        s_gps.gpm_step = GPM_VALID;
+    }
+    
+}
+
+
 static void check_fix_state(void)
 {
 	JsonObject* p_log_root = NULL;
 	char snr_str[128] = {0};
+	gm_cell_info_struct cell_info;
+	u16 upload_time_interval;
+
 	if (s_gps.state < GM_GPS_FIX_3D)
 	{
-		if (false == system_state_has_reported_lbs_since_boot() && false == system_state_has_reported_gps_since_boot())
+		//no need upload when upload_time_interval == 0 //20200323
+	    config_service_get(CFG_UPLOADTIME, TYPE_SHORT, &upload_time_interval, sizeof(upload_time_interval));
+		if (upload_time_interval > 0 && false == system_state_has_reported_lbs_since_boot() && false == system_state_has_reported_gps_since_boot())
 		{
-			gps_service_push_lbs();
-			system_state_set_has_reported_lbs_since_boot(true);
+			if (hard_ware_is_device_w() && !config_service_is_test_mode())
+			{
+				u8 work_mode;
+				config_service_get(CFG_WORKMODE, TYPE_BYTE, &work_mode, sizeof(work_mode));
+				if (work_mode == 0)
+				{
+					if (hard_ware_device_has_wifi())
+					{
+						wifi_create((PsFuncPtr)report_wifi_lbs);
+					}
+					else
+					{
+						gps_service_push_lbs();
+					}
+					system_state_set_has_reported_lbs_since_boot(true);
+				}
+			}
+			else if (GM_SUCCESS == gsm_get_cell_info(&cell_info))
+			{
+				gps_service_push_lbs();
+				system_state_set_has_reported_lbs_since_boot(true);
+			}
 		}
 		p_log_root = json_create();
 		json_add_string(p_log_root, "event", "unfixed");
@@ -498,6 +766,7 @@ static void reopen_gps(void)
 	hard_ware_open_gps();
 	s_gps.internal_state = GM_GPS_STATE_WAIT_VERSION;
 	s_gps.power_on_time = util_clock();
+	s_gps.state = GM_GPS_FIX_NONE;
 	GM_StartTimer(GM_TIMER_GPS_CHECK_RECEIVED, TIM_GEN_1SECOND*1, check_has_received_data);
 	GM_StartTimer(GM_TIMER_GPS_CHECK_STATE, TIM_GEN_1SECOND*60, check_fix_state);
 	
@@ -640,6 +909,8 @@ GM_ERRCODE gps_write_agps_data(const U16 seg_index, const U8* p_data, const U16 
 GM_ERRCODE gps_power_off(void)
 {
 	s_gps.state = GM_GPS_OFF;
+	wifi_destroy();
+	GM_StopTimer(GM_TIMER_WIFI_SCAN);
 	GM_StopTimer(GM_TIMER_GPS_CHECK_STATE);
 	GM_StopTimer(GM_TIMER_GPS_CHECK_RECEIVED);
 	uart_close_port(GM_UART_GPS);
@@ -653,6 +924,26 @@ GM_ERRCODE gps_power_off(void)
 	gps_kalman_filter_destroy();
 	return GM_SUCCESS;
 }
+
+GM_ERRCODE gps_power_off_nosleep(void)
+{
+	s_gps.state = GM_GPS_OFF;
+	wifi_destroy();
+	GM_StopTimer(GM_TIMER_WIFI_SCAN);
+	GM_StopTimer(GM_TIMER_GPS_CHECK_STATE);
+	GM_StopTimer(GM_TIMER_GPS_CHECK_RECEIVED);
+	uart_close_port(GM_UART_GPS);
+	led_set_gps_state(GM_LED_OFF);
+	
+	//uart_close_port(GM_UART_DEBUG);
+	hard_ware_close_gps();
+	//hard_ware_sleep();
+	//GM_SysMsdelay(1000);
+	//s_gps.sleep_time = util_clock();
+	gps_kalman_filter_destroy();
+	return GM_SUCCESS;
+}
+
 
 GPSState gps_get_state(void)
 {
@@ -741,8 +1032,14 @@ bool gps_get_last_n_senconds_data(U8 seconds,GPSData* p_data)
 		{
 				return false;
 		}
-        p_data->satellites = s_gps.satellites_tracked;
-		p_data->precision = s_gps.hdop;
+		if(!circular_queue_get_by_index_f(&s_gps.gps_hdop_queue, seconds, &p_data->hdop))
+		{
+				return false;
+		}
+		if(!circular_queue_get_by_index_i(&s_gps.gps_satellites_queue, seconds, (S32*)&p_data->satellites_tracked))
+		{
+				return false;
+		}
 		p_data->signal_intensity_grade = s_gps.signal_intensity_grade;
 		return true;
 	}
@@ -751,54 +1048,59 @@ bool gps_get_last_n_senconds_data(U8 seconds,GPSData* p_data)
 
 static void check_has_received_data(void)
 {
-    //如果串口还没收到数据
-	if (s_gps.internal_state <= GM_GPS_STATE_WAIT_VERSION)
-	{        
-		//连续10分钟未收到数据重启,否则重新打开GPS和串口继续检查是否收到数据
-		if((util_clock() - s_gps.last_rcv_time) >= 10*SECONDS_PER_MIN && (util_clock() - s_gps.power_on_time) > 10*SECONDS_PER_MIN)
+    //如果串口还没收到数据      
+	//连续10分钟未收到数据重启,否则重新打开GPS和串口继续检查是否收到数据
+	if((util_clock() - s_gps.last_rcv_time) >= 10*SECONDS_PER_MIN && (util_clock() - s_gps.power_on_time) > 10*SECONDS_PER_MIN)
+	{
+		hard_ware_reboot(GM_REBOOT_GPS,1);
+		return;
+	}
+	else if ((util_clock() - s_gps.last_rcv_time) >= SECONDS_PER_MIN/2 || s_gps.internal_state <= GM_GPS_STATE_WAIT_VERSION)
+	{
+		GM_ERRCODE ret = GM_SUCCESS;
+		hard_ware_close_gps();
+		uart_close_port(GM_UART_GPS);
+		GM_SysMsdelay(100);
+
+		//如果型号未知，更换波特率
+		if(GM_GPS_TYPE_UNKNOWN == s_gps.gpsdev_type)
 		{
-			hard_ware_reboot(GM_REBOOT_GPS,1);
+			if (BAUD_RATE_HIGH == s_gps.baud_rate)
+			{
+				s_gps.baud_rate = BAUD_RATE_LOW;
+			}
+			else
+			{
+				s_gps.baud_rate = BAUD_RATE_HIGH;
+			}
+		}
+		
+		ret = uart_open_port(GM_UART_GPS, s_gps.baud_rate, GM_REOPEN_GPS_PORT_TIME);
+		if(GM_SUCCESS != ret)
+		{
+			LOG(FATAL,"Failed to open GPS uart,ret=%d", ret);
 			return;
 		}
 		else
-		{
-			GM_ERRCODE ret = GM_SUCCESS;
-			hard_ware_close_gps();
-			uart_close_port(GM_UART_GPS);
-			GM_SysMsdelay(100);
-
-			//如果型号未知，更换波特率
-			if(GM_GPS_TYPE_UNKNOWN == s_gps.gpsdev_type)
-			{
-				if (BAUD_RATE_HIGH == s_gps.baud_rate)
-				{
-					s_gps.baud_rate = BAUD_RATE_LOW;
-				}
-				else
-				{
-					s_gps.baud_rate = BAUD_RATE_HIGH;
-				}
-			}
-			
-			ret = uart_open_port(GM_UART_GPS, s_gps.baud_rate, GM_REOPEN_GPS_PORT_TIME);
-			if(GM_SUCCESS != ret)
-			{
-				LOG(FATAL,"Failed to open GPS uart,ret=%d", ret);
-				return;
-			}
-			else
-			{	
-				LOG(INFO,"Reopen UART with %d.",s_gps.baud_rate);
-				query_mtk_version();
-			}
-			hard_ware_open_gps();
-			GM_StartTimer(GM_TIMER_GPS_CHECK_RECEIVED, TIM_GEN_1SECOND*5, check_has_received_data);
+		{	
+			LOG(INFO,"Reopen UART with %d.",s_gps.baud_rate);
+			query_mtk_version();
 		}
-		
+		hard_ware_open_gps();
+		led_set_gps_state(GM_LED_FLASH);
+		s_gps.state = GM_GPS_FIX_NONE;
+		s_gps.constant_speed_time = 0;
+		s_gps.static_speed_time = 0;
+		s_gps.aclr_avg_calculate_by_speed = 0;
+		s_gps.is_fix = false;
+		s_gps.is_3d = false;
+		s_gps.is_diff = false;
 	}
-	else
+
+	if(GM_SYSTEM_STATE_WORK == system_state_get_work_state())
 	{
-		LOG(DEBUG,"Internal state:%d",s_gps.internal_state);
+		u16 reopen_time = (s_gps.internal_state <= GM_GPS_STATE_WAIT_VERSION) ? TIM_GEN_1SECOND*5 : TIM_GEN_1SECOND*30;
+		GM_StartTimer(GM_TIMER_GPS_CHECK_RECEIVED, reopen_time, check_has_received_data);
 	}
 }
 
@@ -1536,11 +1838,10 @@ static void check_fix_state_change(void)
 		json_add_string(p_log_root, "snr", snr_str);
 		json_add_int(p_log_root, "csq", gsm_get_csq());
 		log_service_upload(INFO, p_log_root);
-
-		
 		
 		led_set_gps_state(GM_LED_ON);
 		s_gps.state = (GPSState)(s_gps.is_fix << 2 | (s_gps.is_3d << 1) | (s_gps.is_diff));
+		gps_service_heart_atonce();
 	}
 	else if(GM_CHANGE_FALSE == change)
 	{
@@ -1561,9 +1862,16 @@ static void check_fix_state_change(void)
 		json_add_string(p_log_root, "snr", snr_str);
 		json_add_int(p_log_root, "csq", gsm_get_csq());
 		log_service_upload(INFO, p_log_root);
+
+		//由定位到不定位立即上传（进隧道、车库等）
+		gps_service_send_one_locate(GPS_MODE_TURN_POINT, false);
 		
 		led_set_gps_state(GM_LED_FLASH);
 		s_gps.state = (GPSState)(s_gps.is_fix << 2 | (s_gps.is_3d << 1) | (s_gps.is_diff));
+		s_gps.constant_speed_time = 0;
+		s_gps.static_speed_time = 0;
+		s_gps.aclr_avg_calculate_by_speed = 0;
+		gps_service_heart_atonce();
 	}
 	else
 	{
@@ -1571,13 +1879,42 @@ static void check_fix_state_change(void)
 	}
 	
 }
+
+//从最近10秒的历史数据中根据时间和水平精度因子找到一个最优的数据
+//时间*0.1+水平精度因子作为选择的标准，最小的为最优
+bool gps_find_optimal_data_by_time_and_hdop(GPSData* p_data)
+{
+	GPSData data;
+	U8 index = 0;
+	float min_select_value = INFINITY;
+	U32 last_gps_time = p_data->gps_time;
+	
+	for(index = 0;index < CONFIG_UPLOAD_TIME_DEFAULT;index++)
+	{
+		if(!gps_get_last_n_senconds_data(index,&data) || (last_gps_time - data.gps_time) >= CONFIG_UPLOAD_TIME_DEFAULT)
+		{
+			break;
+		}
+		else
+		{
+			float select_value = index*0.1 + data.hdop;
+			if(select_value < min_select_value)
+			{
+				*p_data = data;
+				min_select_value = select_value;
+				//LOG(DEBUG,"index = %d,hdop=%f,value=%f",index,data.hdop,select_value);
+			}
+		}
+	}
+	return true;
+}
 static void on_received_rmc(const NMEASentenceRMC rmc)
 {
 	GPSData gps_data = {0};
-	U8 index = 0;
+	/*U8 index = 0;
 	float lat_avg = 0;
 	float lng_avg = 0;
-	float speed_avg = 0;
+	float speed_avg = 0;*/
 	time_t seconds_from_reboot = util_clock();
 
 	if (s_gps.gpsdev_type == GM_GPS_TYPE_MTK_EPO)
@@ -1585,15 +1922,14 @@ static void on_received_rmc(const NMEASentenceRMC rmc)
 		on_received_fixed_state(rmc.valid?NMEA_GPGSA_FIX_3D:NMEA_GPGSA_FIX_NONE);
 	}
 
-
-	if (s_gps.state != GM_GPS_FIX_3D)
+	if (!gps_is_fixed())
 	{
 		return;
 	}
 
 	if (seconds_from_reboot - s_gps.save_time >= 1)
 	{
-		U8 filter_mode = 0;
+		//U8 filter_mode = 0;
 		gps_data.gps_time = nmea_get_utc_time(&rmc.date,&rmc.time);
 		gps_data.lat = nmea_tocoord(&rmc.latitude);
 		gps_data.lng = nmea_tocoord(&rmc.longitude);
@@ -1615,18 +1951,13 @@ static void on_received_rmc(const NMEASentenceRMC rmc)
 		{
 			gps_data.course = nmea_tofloat(&rmc.course);
 		}
-		gps_data.satellites = s_gps.satellites_tracked;
-		gps_data.precision = s_gps.hdop;
+		gps_data.satellites_tracked = s_gps.satellites_tracked;
+		gps_data.hdop = s_gps.hdop;
 		gps_data.signal_intensity_grade = s_gps.signal_intensity_grade;
 		gps_data.alt = s_gps.altitude;
 
 		//检查异常数据
-		if (0 == gps_data.gps_time || false == rmc.valid)
-		{
-			return;
-		}
-		
-		if (fabs(gps_data.lat) < 0.1 &&  fabs(gps_data.lng)  < 0.1)
+		if (0 == gps_data.gps_time || false == rmc.valid || (fabs(gps_data.lat) < 0.1 &&  fabs(gps_data.lng)  < 0.1))
 		{
 			return;
 		}
@@ -1642,8 +1973,10 @@ static void on_received_rmc(const NMEASentenceRMC rmc)
 		circular_queue_en_queue_f(&s_gps.gps_lng_queue, gps_data.lng);
 		circular_queue_en_queue_f(&s_gps.gps_speed_queue,gps_data.speed);
 		circular_queue_en_queue_f(&s_gps.gps_course_queue,gps_data.course);
+		circular_queue_en_queue_f(&s_gps.gps_hdop_queue,gps_data.hdop);
+		circular_queue_en_queue_i(&s_gps.gps_satellites_queue,gps_data.satellites_tracked);
 		
-		config_service_get(CFG_SMOOTH_TRACK, TYPE_BYTE, &filter_mode, sizeof(filter_mode));
+		/*config_service_get(CFG_SMOOTH_TRACK, TYPE_BYTE, &filter_mode, sizeof(filter_mode));
 		if(filter_mode == 1)
 		{
 			LOG(DEBUG,"Avage filter.");
@@ -1690,7 +2023,9 @@ static void on_received_rmc(const NMEASentenceRMC rmc)
 		else
 		{
 			LOG(DEBUG,"filter_mode:%d",filter_mode);
-		}
+		}*/
+		
+		gps_find_optimal_data_by_time_and_hdop(&gps_data);
 		upload_gps_data(gps_data);
 	}
 }
@@ -1779,11 +2114,18 @@ static GpsDataModeEnum upload_mode(const GPSData current_gps_data)
 		return GPS_MODE_NONE;
 	}
 
+	if (upload_time_interval == 0)
+	{
+		return GPS_MODE_NONE;
+	}
+
 	if(false == system_state_has_reported_gps_since_boot())
 	{
 		system_state_set_has_reported_gps_since_boot(true);
+		system_state_set_reported_gps_since_modify_ip(true);
 		s_gps.distance_since_last_report = 0;
 		s_gps.report_time = seconds_from_reboot;
+        //GPMFUN(step2)();
 		return GPS_MODE_POWER_UP;
 	}
 	
@@ -1792,13 +2134,17 @@ static GpsDataModeEnum upload_mode(const GPSData current_gps_data)
 		system_state_set_reported_gps_since_modify_ip(true);
 		s_gps.distance_since_last_report = 0;
 		s_gps.report_time = seconds_from_reboot;
+        //GPMFUN(step2)();
 		return GPS_MODE_POWER_UP;
 	}
 	
     config_service_get(CFG_IS_STATIC_UPLOAD, TYPE_BOOL, &static_upload_enable, sizeof(static_upload_enable));
-	if (VEHICLE_STATE_STATIC == system_state_get_vehicle_state()  && false == static_upload_enable && false == config_service_is_test_mode())
+	if (VEHICLE_STATE_STATIC == system_state_get_vehicle_state()  
+		&& false == static_upload_enable 
+		&& false == config_service_is_test_mode()
+		&& system_state_has_reported_gps_after_run())
 	{
-		LOG(DEBUG, "Need not upload data because of static.");
+		LOG(INFO, "Need not upload data because of static.");
 		return GPS_MODE_NONE;
 	}
 	else 
@@ -1807,12 +2153,14 @@ static GpsDataModeEnum upload_mode(const GPSData current_gps_data)
 		{
 			s_gps.distance_since_last_report = 0;
 			s_gps.report_time = seconds_from_reboot;
+            //GPMFUN(step2)();
 			if(VEHICLE_STATE_STATIC == system_state_get_vehicle_state())
 			{
 				return GPS_MODE_STATIC_POSITION;
 			}
 			else
 			{
+                
 				return GPS_MODE_FIX_TIME;
 			}
 			
@@ -1821,6 +2169,7 @@ static GpsDataModeEnum upload_mode(const GPSData current_gps_data)
 		{
 			s_gps.distance_since_last_report = 0;
 			s_gps.report_time = seconds_from_reboot;
+            //GPMFUN(step2)();
 			LOG(DEBUG, "GPS_MODE_TURN_POINT");
 			return GPS_MODE_TURN_POINT;
 		}
@@ -1867,6 +2216,13 @@ static void upload_gps_data(const GPSData current_gps_data)
 
 	ret = gps_service_push_gps(mode,&current_gps_data);
 
+    if(ret == GM_SUCCESS)
+    {
+        s_gps.gpm_send_flg = 1;
+        GPMFUN(step2)();
+    }
+	system_state_set_has_reported_gps_after_run(true);
+	
 	if (last_report_gps.gps_time != 0)
 	{
 		s_gps.distance_since_last_report = applied_math_get_distance(current_gps_data.lng, current_gps_data.lat, last_report_gps.lng, last_report_gps.lat);

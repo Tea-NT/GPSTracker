@@ -38,6 +38,7 @@ typedef enum
     GM_REBOOT_GPRS = 3,
     GM_REBOOT_GPS = 4,
     GM_REBOOT_CHECKPARA = 5,
+    GM_REBOOT_RECORD_FAIL = 6,
 }BootReason;
 
 
@@ -135,6 +136,7 @@ typedef enum
     SYSBIT_ALARM_SHARP_TURN = 1L<<27, //急转弯报警
     SYSBIT_ALARM_PULL_DOWN = 1L<<28,  //拆动报警
     SYSBIT_ALARM_MOVE = 1L<<29,       //车辆移动报警（使用原位移报警位）
+    SYSBIT_ALARM_SOS = 1L<<30,		  //车辆劫警报警
 }StateBitEnum;
 
 
@@ -361,9 +363,9 @@ bool system_state_get_move_alarm(void);
 
 GM_ERRCODE system_state_set_move_alarm(bool state);
 
-bool system_state_get_move_alarm(void);
+bool system_state_get_sos_alarm(void);
 
-GM_ERRCODE system_state_set_move_alarm(bool state);
+GM_ERRCODE system_state_set_sos_alarm(bool state);
 
 bool system_state_get_has_started_charge(void);
 
@@ -383,11 +385,19 @@ bool system_state_is_cold_boot(void);
 
 GM_ERRCODE system_state_set_cold_boot(bool state);
 
+GM_ERRCODE system_state_set_recorder(bool state);
+
+bool system_state_get_recorder(void);
+
 GM_ERRCODE system_state_set_user_relay_state(bool state);
 
 U8 system_state_get_extern_battery_voltage_grade(void);
 
 GM_ERRCODE system_state_set_extern_battery_voltage_grade(U8 voltage_grade);
+
+bool system_state_get_sos_alarm(void);
+
+GM_ERRCODE system_state_set_sos_alarm(bool state);
 
 void system_state_set_mileage(U64 mileage);
 
@@ -409,6 +419,7 @@ const char *system_state_get_gpss_reboot_reason(void);
 
 void system_state_set_ip_cache(U8 index,const U8* ip);
 void system_state_get_ip_cache(U8 index,U8* ip);
+void system_state_clear_ip_cache(U8 index);
 
 void system_state_set_public_default_ip(void);
 
@@ -416,8 +427,15 @@ void system_state_set_internal_default_ip(void);
 
 GM_ERRCODE system_state_save_state_to_file(void); 
 
+void system_state_set_track_upload_time(U16 tmp_upload_time);
 
+U16 system_state_get_track_upload_time(void);
 
+U32 system_state_get_receive_track_upload_time_clock(void);
+
+GM_ERRCODE system_state_set_has_reported_gps_after_run(bool state);
+
+bool system_state_has_reported_gps_after_run(void);
 
 #endif
 

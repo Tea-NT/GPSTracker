@@ -61,8 +61,8 @@ typedef struct
     bit8 ——设防状态
     bit9 ——上电后是否已上传过LBS定位
     bit10——是否冷启动
-    bit11——备用
-    bit12——备用
+    bit11——是否在录音
+    bit12——运动后是否已上传GPS数据
     bit13——备用
     bit14——备用
     bit15——备用
@@ -81,7 +81,7 @@ typedef struct
     bit27——急转弯报警
     bit28——拆动报警
     bit29——车辆移动报警
-    bit30——备用
+    bit30——SOS报警
     bit31——备用
     **********************************************************************/
     U32 status_bits;
@@ -149,11 +149,21 @@ typedef struct
     GPSData latest_gps;
 
 	u8 ip_cache[SOCKET_INDEX_MAX][4];
+	
 }SystemState,*PSystemState;
+
+
+//以下变量不永久保存
+typedef struct
+{	
+	U16 tmp_upload_time;
+	U32 receive_tmp_upload_time_clock;
+}TmpSystemState,*PTmpSystemState;
 
 
 
 static SystemState s_system_state;
+static TmpSystemState s_tmp_system_state;
 
 static void init_para(bool all);
 
@@ -286,6 +296,9 @@ static void init_para(bool all)
 		system_state_set_public_default_ip();
 	}
 
+	s_tmp_system_state.tmp_upload_time = 0;
+	s_tmp_system_state.receive_tmp_upload_time_clock = 0;
+
 }
 
 GM_ERRCODE system_state_destroy(void)
@@ -416,6 +429,8 @@ const char* system_state_get_boot_reason_str(BootReason reason)
 			return "不定位重启";
 		case GM_REBOOT_CHECKPARA:
 			return "修复重启";
+		case GM_REBOOT_RECORD_FAIL:
+			return "录音失败重启";
 		default:
 			return "未知";
 	}
@@ -628,6 +643,31 @@ GM_ERRCODE system_state_set_has_reported_gps_since_boot(bool state)
 	LOG(INFO,"system_state_set_has_reported_gps_since_boot");
 	return system_state_save_state_to_file();
 }
+
+bool system_state_has_reported_gps_after_run(void)
+{
+	return GET_BIT12(s_system_state.status_bits);
+}
+
+GM_ERRCODE system_state_set_has_reported_gps_after_run(bool state)
+{
+	if (state == system_state_has_reported_gps_after_run())
+	{
+		return GM_SUCCESS;
+	}
+
+	if (state)
+	{
+		SET_BIT12(s_system_state.status_bits);
+	}
+	else
+	{
+		CLR_BIT12(s_system_state.status_bits);
+	}
+	LOG(INFO,"system_state_set_has_reported_gps_after_run");
+	return system_state_save_state_to_file();
+}
+
 
 bool system_state_has_reported_static_gps(void)
 {
@@ -852,6 +892,37 @@ GM_ERRCODE system_state_set_cold_boot(bool state)
 	LOG(INFO,"system_state_set_cold_boot");
 	return system_state_save_state_to_file();
 }
+
+
+GM_ERRCODE system_state_set_recorder(bool state)
+{
+	if (state == system_state_get_recorder())
+	{
+		return GM_SUCCESS;
+	}
+	
+	//状态发生变化，触发一次心跳
+	gps_service_heart_atonce();
+	
+	if (state)
+	{
+		SET_BIT11(s_system_state.status_bits);
+	}
+	else
+	{
+		CLR_BIT11(s_system_state.status_bits);
+	}
+	LOG(INFO,"system_state_set_recorder");
+	//频繁变化，不保存到文件
+	return system_state_save_state_to_file();
+}
+
+
+bool system_state_get_recorder(void)
+{
+	return GET_BIT11(s_system_state.status_bits);
+}
+
 
 U8 system_state_get_extern_battery_voltage_grade(void)
 {
@@ -1229,6 +1300,36 @@ GM_ERRCODE system_state_set_move_alarm(bool state)
 	return system_state_save_state_to_file();
 }
 
+
+bool system_state_get_sos_alarm(void)
+{
+	return GET_BIT30(s_system_state.status_bits);
+}
+
+GM_ERRCODE system_state_set_sos_alarm(bool state)
+{
+	if (state == system_state_get_sos_alarm())
+	{
+		return GM_SUCCESS;
+	}
+	
+	//状态发生变化，触发一次心跳
+	gps_service_heart_atonce();
+
+	if (state)
+	{
+		SET_BIT30(s_system_state.status_bits);
+	}
+	else
+	{
+		CLR_BIT30(s_system_state.status_bits);
+	}
+	LOG(INFO,"system_state_set_sos_alarm");
+	return system_state_save_state_to_file();
+}
+
+
+
 void system_state_set_mileage(U64 mileage)
 {
 	if (mileage == s_system_state.mileage)
@@ -1320,4 +1421,24 @@ void system_state_get_ip_cache(U8 index,U8* ip)
 	GM_memcpy(ip, s_system_state.ip_cache[index], 4);
 }
 
+void system_state_clear_ip_cache(U8 index)
+{
+	GM_memset(s_system_state.ip_cache[index], 0, 4);
+	system_state_save_state_to_file();
+}
+void system_state_set_track_upload_time(U16 tmp_upload_time)
+{
+	s_tmp_system_state.tmp_upload_time = tmp_upload_time;
+	s_tmp_system_state.receive_tmp_upload_time_clock = util_clock();
+}
+
+U16 system_state_get_track_upload_time(void)
+{
+	return s_tmp_system_state.tmp_upload_time;
+}
+
+U32 system_state_get_receive_track_upload_time_clock(void)
+{
+	return s_tmp_system_state.receive_tmp_upload_time_clock;
+}
 

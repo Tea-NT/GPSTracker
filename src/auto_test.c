@@ -20,6 +20,8 @@
 
  */ 
 
+#include <stdlib.h>
+#include <math.h>
 #include <gm_system.h>
 #include <gm_stdlib.h>
 #include <gm_timer.h>
@@ -41,6 +43,9 @@
 #include "applied_math.h"
 #include "uart.h"
 #include "uart.h"
+#include "hard_ware.h"
+#include "wifi.h"
+#include "recorder.h"
 
 #pragma diag_suppress 870 
 
@@ -148,6 +153,17 @@ typedef struct
 	U32 g_sensor_error_counts;
 	U32 g_sensor_sleep_time;
 	U32 g_sensor_shake_counts;
+
+	u8 first_ap_rssi;
+	u8 second_ap_rssi;
+	u32 wifi_scan_counts;
+
+	u32 recorder_file_counts;
+
+	u32 key_high_count;
+    u32 key_low_count;
+
+    u32 unix_fix_time;
 }AutoTestResult;
 
 typedef struct
@@ -179,7 +195,19 @@ static void auto_test_check_gsensor(void);
 
 static U32 auto_test_calc_hashnr(const u8 *key, u32 len);
 static void auto_test_check_chip_rid(void);
-static bool is_device_05(ConfigDeviceTypeEnum dev_type);
+static void auto_test_wifi_create(void);
+static void auto_test_wifi_destroy(void);
+#ifdef _SW_SUPPORT_RECORD_
+static void auto_test_recorder_create(void);
+static void auto_test_recorder_destroy(void);
+#endif
+
+bool get_auto_test_state(void)
+{
+	return s_auto_test.start;
+}
+
+
 
 GM_ERRCODE auto_test_create(bool is_self_check)
 {
@@ -214,22 +242,29 @@ GM_ERRCODE auto_test_create(bool is_self_check)
 	
     GM_ReleaseVerno((U8*)s_auto_test.test_result.kernal_version);
 
-	
+    auto_test_wifi_create();
+
+	#ifdef _SW_SUPPORT_RECORD_
+    auto_test_recorder_create();
+    #endif
 	
 	return GM_SUCCESS;
 }
  
 GM_ERRCODE auto_test_destroy(void)
 {
-	u8 ip[4];
-	
-	LOG_TEST("Exit test mode.");
-	s_auto_test.start = false;
-	
-	log_service_enable_print(true);
-	config_service_set_test_mode(false);
-	GM_memset(ip, 0x00, 4);
-	system_state_set_ip_cache(SOCKET_INDEX_MAIN, ip);
+	if (s_auto_test.start == true)
+	{
+		LOG_TEST("Exit test mode.");
+		s_auto_test.start = false;
+		log_service_enable_print(true);
+		config_service_set_test_mode(false);
+		auto_test_wifi_destroy();
+		#ifdef _SW_SUPPORT_RECORD_
+		auto_test_recorder_destroy();
+		#endif
+		system_state_clear_ip_cache(SOCKET_INDEX_MAIN);
+	}
 	
 	return GM_SUCCESS;
 }
@@ -281,6 +316,8 @@ static void init_test_result(AutoTestResult* p_test_result)
 	p_test_result->magic = AUTO_TEST_MAGIC_NUMBER;
 	p_test_result->voltage_min = 200;
 	p_test_result->csq_min = 31;
+	p_test_result->first_ap_rssi = 100;
+	p_test_result->second_ap_rssi = 100;
 }
 
 static void auto_test_self_test(void)
@@ -353,6 +390,25 @@ void auto_test_acc_off(void)
 {
    s_auto_test.test_result.acc_off_count++;
 }
+
+
+void auto_test_key_value(u32 value)
+{
+	if(!s_auto_test.start)
+	{
+		return;
+	}
+	
+	if (value <= 50)
+	{
+		s_auto_test.test_result.key_low_count++;
+	}
+	else if (value >= 1000)
+    {
+    	s_auto_test.test_result.key_high_count++;
+    }
+}
+
 
 static GM_ERRCODE read_result_from_file(const U16* FileName,AutoTestResult* p_result)
 {
@@ -507,6 +563,17 @@ static void struct_to_jsonstr(const AutoTestResult result,char* json_str)
 	json_add_int(p_result_root, "g_sensor_sleep_time", result.g_sensor_sleep_time);
 	json_add_int(p_result_root, "g_sensor_shake_counts", result.g_sensor_shake_counts);
 
+	json_add_int(p_result_root, "wifi_scan_counts", result.wifi_scan_counts);
+	json_add_int(p_result_root, "first_ap_rssi", result.first_ap_rssi);
+	json_add_int(p_result_root, "second_ap_rssi", result.second_ap_rssi);
+
+	json_add_int(p_result_root, "recorder_file_counts", result.recorder_file_counts);
+
+	json_add_int(p_result_root, "key_high_count", result.key_high_count);
+	json_add_int(p_result_root, "key_low_count", result.key_low_count);
+
+	json_add_int(p_result_root, "unix_fix_time", result.unix_fix_time);
+
 	json_print_to_buffer(p_result_root, json_str, sizeof(json_str) - 1);
 	json_destroy(p_result_root);
 
@@ -558,7 +625,7 @@ static void auto_test_check_sim(void)
 	{
 		return;
 	}
-    if (GM_CheckSimValid())
+    if (get_sim_valid())
     {
     	if(GM_SUCCESS != gsm_get_iccid(s_auto_test.test_result.iccid))
     	{
@@ -662,10 +729,9 @@ static void auto_test_check_battery_status(void)
 	float power_voltage = 0;
 	
 	hard_ware_get_power_voltage(&power_voltage);
-
+	hard_ware_get_internal_battery_voltage(&s_auto_test.test_result.battery_voltage);
     if (power_voltage < 7)
     {
-    	hard_ware_get_internal_battery_voltage(&s_auto_test.test_result.battery_voltage);
     	if (s_auto_test.test_result.battery_voltage >= BATTERY_VOLTAGE_STANDARD)
 		{
 			check_count++;
@@ -753,14 +819,13 @@ static void auto_test_check_gps_location(void)
     	const SNRInfo* snr_info = gps_get_snr_array();
 		for(index = 0;index < 5;index++)
 		{
-			snr[index] = snr_info[index].snr;
-			if (snr[index] != 0)
+			if (snr_info[index].snr != 0)
 			{
-				non_zero_num++;
+				snr[non_zero_num++] = snr_info[index].snr;
 			}
 		}
 		//只计算非零SNR平均值，根据gps.c中on_received_gsv函数来看，0值的一定在最后
-		snr_avg  = applied_math_avage(snr,non_zero_num);
+		snr_avg  = (non_zero_num > 0) ? applied_math_avage(snr,non_zero_num) : 0.0f;
 		//LOG_TEST("snr_avg:%f",snr[index]);
 		s_auto_test.test_result.snr_avg = (s_auto_test.test_result.snr_avg * s_auto_test.test_result.snr_counts + snr_avg)/(s_auto_test.test_result.snr_counts + 1);
 		//LOG_TEST("test_result.snr_avg:%f",snr[index]);
@@ -771,7 +836,6 @@ static void auto_test_check_gps_location(void)
 			s_auto_test.test_result.required_items_test_fail = true;
 			LOG_TEST("Failed to auto_test_check_gps_location1!");
 		}
-		
 		s_auto_test.test_result.first_fix_time = gps_get_fix_time();
 		if (s_auto_test.test_result.first_fix_time > 2*SECONDS_PER_MIN)
 		{
@@ -779,6 +843,11 @@ static void auto_test_check_gps_location(void)
 			s_auto_test.test_result.required_items_test_fail = true;
 			LOG_TEST("Failed to auto_test_check_gps_location2!");
 		}
+    }
+    
+    if (system_state_has_reported_gps_since_boot() && s_auto_test.test_result.unix_fix_time == 0 && gps_is_fixed())
+    {
+		s_auto_test.test_result.unix_fix_time = util_get_utc_time();
     }
 }
 
@@ -832,21 +901,6 @@ static void auto_test_check_chip_rid(void)
     }
 }
 
-static bool is_device_05(ConfigDeviceTypeEnum dev_type)
-{
-	switch(dev_type)
- 	{
- 		case DEVICE_GS05A:
-		case DEVICE_GS05B:
-		case DEVICE_GS05F:
-		case DEVICE_GS05I:
-		case DEVICE_GS05H:
-			return true;
-
-		default:
-			return false;
- 	}
-}
 
 void auto_test_repair_ramp(void)
 {
@@ -867,14 +921,14 @@ void auto_test_repair_ramp(void)
 
 	for (index=0; index<15; index++)
 	{
-		if (is_device_05(dev_type) && ramp.rampData.power[index] > 520)
+		if (hard_ware_is_device_05() && ramp.rampData.power[index] > 520)
 		{
 			json_add_int(p_json_log, "GSM850", index);
 			json_add_int(p_json_log, "power", ramp.rampData.power[index]);
 			ramp.rampData.power[index] = 520;
 			need_repair = true;
 		}
-		else if (!is_device_05(dev_type) && ramp.rampData.power[index] > 540)
+		else if (!hard_ware_is_device_05() && ramp.rampData.power[index] > 540)
 		{
 			json_add_int(p_json_log, "GSM850", index);
 			json_add_int(p_json_log, "power", ramp.rampData.power[index]);
@@ -895,14 +949,14 @@ void auto_test_repair_ramp(void)
 
 	for (index=0; index<15; index++)
 	{
-		if (is_device_05(dev_type) && ramp.rampData.power[index] > 520)
+		if (hard_ware_is_device_05() && ramp.rampData.power[index] > 520)
 		{
 			json_add_int(p_json_log, "GSM900", index);
 			json_add_int(p_json_log, "power", ramp.rampData.power[index]);
 			ramp.rampData.power[index] = 520;
 			need_repair = true;
 		}
-		else if (!is_device_05(dev_type) && ramp.rampData.power[index] > 540)
+		else if (!hard_ware_is_device_05() && ramp.rampData.power[index] > 540)
 		{
 			json_add_int(p_json_log, "GSM900", index);
 			json_add_int(p_json_log, "power", ramp.rampData.power[index]);
@@ -969,5 +1023,70 @@ void auto_test_repair_ramp(void)
 		p_json_log = NULL;
 	}
 }
+
+
+static void auto_test_wifi_call_back(void* msg)
+{
+	bool *result = (bool*)msg;
+	scanonly_scan_ap_info_struct *ap;
+	u8 static retry_cnt = 0;
+	
+	if ((*result) && (get_wifi_scan_ap_num() >= 2))
+	{
+		ap = (scanonly_scan_ap_info_struct*)get_wifi_scan_ap_info();
+		s_auto_test.test_result.first_ap_rssi = (u8)(((s_auto_test.test_result.first_ap_rssi * s_auto_test.test_result.wifi_scan_counts) + abs(ap[0].rssi)) / (s_auto_test.test_result.wifi_scan_counts+1));
+		s_auto_test.test_result.second_ap_rssi = (u8)(((s_auto_test.test_result.second_ap_rssi * s_auto_test.test_result.wifi_scan_counts) + abs(ap[1].rssi)) / (s_auto_test.test_result.wifi_scan_counts+1));
+		s_auto_test.test_result.wifi_scan_counts++;
+		clear_wifi_scan_ap();
+		retry_cnt = 0;
+	}
+	else
+	{
+		auto_test_wifi_destroy();
+		if (retry_cnt < 5)
+		{
+			retry_cnt++;
+			auto_test_wifi_create();
+		}
+		else
+		{
+			retry_cnt = 0;
+			reinit_relay_gpio();
+		}
+		LOG_TEST("Failed to auto_test_wifi_call_back result(%d) ap_num(%d)", *result, get_wifi_scan_ap_num());
+	}
+}
+
+
+
+static void auto_test_wifi_create(void)
+{
+	s_auto_test.test_result.wifi_scan_counts = 0;
+	wifi_create(auto_test_wifi_call_back);
+}
+
+
+static void auto_test_wifi_destroy(void)
+{
+	wifi_destroy();
+}
+
+#ifdef _SW_SUPPORT_RECORD_
+void auto_test_recorder_file_count(void)
+{
+	s_auto_test.test_result.recorder_file_counts++;
+}
+
+static void auto_test_recorder_create(void)
+{
+	start_record(false);
+}
+
+
+static void auto_test_recorder_destroy(void)
+{
+	stop_record(false);
+}
+#endif
 
 

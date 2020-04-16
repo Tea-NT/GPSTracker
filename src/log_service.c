@@ -36,6 +36,9 @@
 #include "gsm.h"
 #include "gprs.h"
 #include "system_state.h"
+#include "at_command.h"
+#include "hard_ware.h"
+
 
 #define LOG_PING_TIME 60
 
@@ -347,11 +350,18 @@ GM_ERRCODE log_service_destroy(void)
 
 static void log_service_close(void)
 {
-    if(s_log_socket.id >=0)
-    {
-        GM_SocketClose(s_log_socket.id);
-        s_log_socket.id=-1;
-    }
+	if(s_log_socket.id >=0)
+	{
+		if (hard_ware_is_at_command())
+		{
+			at_command_close_connect(s_log_socket.access_id);
+		}
+		else
+		{
+			GM_SocketClose(s_log_socket.id);
+			s_log_socket.id=-1;
+		}
+	}
 }
 
 
@@ -448,6 +458,32 @@ static void log_service_init_proc(void)
     }
 }
 
+void los_service_close_ok(void)
+{
+	s_log_socket.id = -1;
+	if (s_log_socket.status == SOCKET_STATUS_CONNECTING)
+	{
+		if(s_log_socket.status_fail_count >= MAX_CONNECT_REPEAT)
+		{
+			// if excuted get_host transfer to error statu, else get_host.
+			if(s_log_socket.excuted_get_host || (s_log_socket.addr[0] == 0))
+			{
+				s_log_socket_extend.data_finish_time = util_clock();
+				log_service_transfer_status(SOCKET_STATUS_DATA_FINISH);
+			}
+			else
+			{
+				log_service_transfer_status(SOCKET_STATUS_INIT);
+			}
+		}
+	}
+	else
+	{
+		s_log_socket_extend.data_finish_time = util_clock();
+		log_service_transfer_status(SOCKET_STATUS_DATA_FINISH);
+	}
+}
+
 void log_service_connection_failed(void)
 {
     log_service_close();
@@ -468,6 +504,27 @@ void log_service_connection_failed(void)
     // else do nothing . wait connecting proc to deal.
 }
 
+void log_service_send_result(bool result)
+{
+	LogSaveData log_data;
+	
+	if (result)
+	{
+		if (GM_SUCCESS == fifo_peek(&s_log_data_fifo, (U8*)&log_data, sizeof(LogSaveData)))
+		{
+			fifo_pop_len(&s_log_data_fifo, sizeof(LogSaveData));
+			LOG(DEBUG,"clock(%d) log_service_send_msg ", util_clock());
+			log_data_release(&log_data);
+		}
+	}
+	else
+	{
+		LOG(ERROR,"Failed to send log data!");
+		log_service_close();
+		s_log_socket_extend.data_finish_time = util_clock();
+		log_service_transfer_status(SOCKET_STATUS_DATA_FINISH);
+	}
+}
 
 void log_service_connection_ok(void)
 {
@@ -477,8 +534,11 @@ void log_service_connection_ok(void)
 void log_service_close_for_reconnect(void)
 {
     log_service_close();
-    s_log_socket_extend.data_finish_time = util_clock();
-    log_service_transfer_status(SOCKET_STATUS_DATA_FINISH);
+    if (!hard_ware_is_at_command())
+    {
+	    s_log_socket_extend.data_finish_time = util_clock();
+	    log_service_transfer_status(SOCKET_STATUS_DATA_FINISH);
+    }
 }
 
 
@@ -511,6 +571,7 @@ static void log_service_connecting_proc(void)
 void log_service_send_msg(SocketType *socket)
 {
     LogSaveData log_data;
+    GM_ERRCODE ret;
 	
 	U8 imei[GM_IMEI_LEN + 1] = {0};
 	if(GM_SUCCESS != gsm_get_imei(imei))
@@ -550,13 +611,14 @@ void log_service_send_msg(SocketType *socket)
 													LOG_PKT_TAIL);
 		s_log_socket_extend.log_seq++;
 		send_buf_len = GM_strlen(p_send_buf);
-        if(GM_SUCCESS == gm_socket_send(socket, (U8*)p_send_buf,send_buf_len))
+		ret = gm_socket_send(socket, (U8*)p_send_buf,send_buf_len);
+        if(GM_SUCCESS == ret)
         {
             fifo_pop_len(&s_log_data_fifo, sizeof(LogSaveData));
 			LOG(DEBUG,"clock(%d) log_service_send_msg msglen(%d):%s", util_clock(), send_buf_len,p_send_buf);
 			log_data_release(&log_data);
         }
-        else
+        else if (GM_MEM_NOT_ENOUGH != ret)
         {
         	LOG(ERROR,"Failed to send log data!");
             log_service_close();

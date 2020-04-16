@@ -277,10 +277,17 @@ float applied_math_avage(const float* p_array,const U16 len)
 {
 	U16 index = 0;
 	float sum = 0;
-	for(index = 0;index < len;index++)
+	if (len == 0)
 	{
-		sum += p_array[index];
+		return 0.0;
 	}
-	return sum/len;
+	else
+	{
+		for(index = 0;index < len;index++)
+		{
+			sum += p_array[index];
+		}
+		return sum/len;
+	}
 }
 

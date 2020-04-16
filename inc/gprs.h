@@ -80,6 +80,9 @@ bool gprs_check_need_reboot(u32 check_time);
 u32 gprs_get_last_good_time(void);
 u32 gprs_get_call_ok_count(void);
 
+void gprs_socket_notify_by_at_command(void* msg_ptr);
+
+
 #endif
 
 

@@ -224,5 +224,27 @@ U8 g_sensor_get_shake_event_count_when_read(void);
  */
 U8 g_sensor_get_shake_event_count_when_eint(void);
 
+/**
+ * Function:   进入睡眠模式
+ * Description:
+ * Input:	   无
+ * Output:	   无
+ * Return:	 
+ * Others:	   
+ */
+
+GM_ERRCODE enter_sleep_mode(void);
+
+/**
+ * Function:   退出睡眠模式
+ * Description:
+ * Input:	   无
+ * Output:	   无
+ * Return:
+ * Others:	   
+ */
+GM_ERRCODE exit_sleep_mode(void);
+
+
 #endif
 

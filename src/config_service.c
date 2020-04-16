@@ -14,6 +14,8 @@
 #include "g_sensor.h"
 #include "auto_test.h"
 #include "gprs.h"
+#include "at_command.h"
+#include "hard_ware.h"
 
 #define CONFIG_PING_TIME  43200
 
@@ -21,6 +23,7 @@ typedef struct
 {
     u32 last_ok_time;   //上一次执行配置检测的时间
     u32 wait;           //执行配置检测的间隔
+    ConfigCmdEnum send_cmd_serial;
 }ConfigServiceExtend;
 
 static SocketType s_config_socket = {-1,"",SOCKET_STATUS_ERROR,};
@@ -104,6 +107,9 @@ static const ConfigParamStruct s_config_param[] =
     {"CRASHTHR_H",                      CFG_SEN_SERIOUS_COLLISION},
 	{"SMOOTH",                          CFG_SMOOTH_TRACK},
 	{"MINSNR",                          CFG_MIN_SNR},
+	{"LIMITNUM",                        CFG_LIMIT_RELAY_NUMBER},
+	{"NWSCAN",							CFG_4G_NWSCAN},
+	{"SIGNAL",							CFG_SIGNAL_INTERVAL},
 };
 
 typedef struct
@@ -134,6 +140,22 @@ static const ConfigDeviceTypeStruct s_config_device[DEVICE_MAX] =
     {"GS05I",                                       DEVICE_GS05I},
     {"GS05H",                                       DEVICE_GS05H},
     {"GM06E",                                       DEVICE_GM06E},
+    {"W1",											DEVICE_W1},
+    {"W3",											DEVICE_W3},
+    {"W7",											DEVICE_W7},
+    {"W12",											DEVICE_W12},
+    {"W18",											DEVICE_W18},
+    {"B1",											DEVICE_B1},
+    {"B3",											DEVICE_B3},
+    {"B5",											DEVICE_B5},
+    {"B7",											DEVICE_B7},
+    {"GS06",										DEVICE_GS06},
+    {"GS08",                                        DEVICE_GS08},
+    {"GS03C",                                       DEVICE_GS03C},
+    {"GS03D",                                       DEVICE_GS03D},
+    {"GS05C",                                       DEVICE_GS05C},
+    {"GS05D",                                       DEVICE_GS05D},
+
 };
 
 static GM_ERRCODE config_service_transfer_status(u8 new_status);
@@ -375,6 +397,26 @@ static void config_service_connecting_proc(void)
 }
 
 
+void config_service_send_result(bool result)
+{
+	if (result)
+	{
+		if (s_config_socket_extend.send_cmd_serial == CFG_CMD_RESULT)
+		{
+			config_service_finish(CONFIG_PING_TIME);
+		}
+	}
+	else
+	{
+		if (s_config_socket_extend.send_cmd_serial == CFG_CMD_REQ)
+		{
+			config_service_finish(CONFIG_PING_TIME);
+		}
+	}
+}
+
+
+
 static GM_ERRCODE config_msg_upload(u8 cmd, const u8 *msg, u16 len)
 {
     u16 k, msglen;
@@ -436,11 +478,14 @@ static void config_msg_request(void)
 {
     U8 msg[1];
     u32 current_time = util_clock();
+    GM_ERRCODE ret;
 	
     msg[0] = CFG_CMD_REQ_ALL;  // req all 
 
     s_config_socket.send_time = current_time; 
-    if(GM_SUCCESS != config_msg_upload(CFG_CMD_REQ, msg,1))
+    ret = config_msg_upload(CFG_CMD_REQ, msg,1);
+    s_config_socket_extend.send_cmd_serial = CFG_CMD_REQ;
+    if(GM_SUCCESS != ret && GM_MEM_NOT_ENOUGH != ret)
     {
         config_service_finish(CONFIG_PING_TIME);
     }
@@ -452,6 +497,7 @@ static void config_msg_response(void)
 	
     msg[0] = CFG_CMD_REQ_ALL;  // req all 
 
+	s_config_socket_extend.send_cmd_serial = CFG_CMD_RESULT;
     config_msg_upload(CFG_CMD_RESULT, msg,1); //ignore send fail
 }
 
@@ -593,7 +639,10 @@ static void config_msg_receive(SocketType *socket)
             }
 
             config_msg_response();
-            config_service_finish(CONFIG_PING_TIME);
+            if (!hard_ware_is_at_command())
+            {
+            	config_service_finish(CONFIG_PING_TIME);
+            }
             break;
                         
         default:
@@ -657,6 +706,28 @@ static void config_service_finish_proc(void)
 }
 
 
+void config_service_close_ok(void)
+{
+    s_config_socket.id = -1;
+    if (s_config_socket.status == SOCKET_STATUS_CONNECTING)
+    {
+    	if(s_config_socket.status_fail_count >= MAX_CONNECT_REPEAT)
+	    {
+	        // if excuted get_host transfer to error statu, else get_host.
+	        if(s_config_socket.excuted_get_host || (s_config_socket.addr[0] == 0))
+	        {
+	            config_service_finish(CONFIG_PING_TIME);
+	        }
+	        else
+	        {
+	            config_service_transfer_status(SOCKET_STATUS_INIT);
+	        }
+	    }
+    }
+}
+
+
+
 
 void config_service_connection_ok(void)
 {
@@ -673,20 +744,23 @@ void config_service_close_for_reconnect(void)
 void config_service_connection_failed(void)
 {
     config_service_close();
-    
-    if(s_config_socket.status_fail_count >= MAX_CONNECT_REPEAT)
+
+    if (!hard_ware_is_at_command())
     {
-        // if excuted get_host transfer to error statu, else get_host.
-        if(s_config_socket.excuted_get_host || (s_config_socket.addr[0] == 0))
-        {
-            config_service_finish(CONFIG_PING_TIME);
-        }
-        else
-        {
-            config_service_transfer_status(SOCKET_STATUS_INIT);
-        }
+	    if(s_config_socket.status_fail_count >= MAX_CONNECT_REPEAT)
+	    {
+	        // if excuted get_host transfer to error statu, else get_host.
+	        if(s_config_socket.excuted_get_host || (s_config_socket.addr[0] == 0))
+	        {
+	            config_service_finish(CONFIG_PING_TIME);
+	        }
+	        else
+	        {
+	            config_service_transfer_status(SOCKET_STATUS_INIT);
+	        }
+	    }
+	    // else do nothing . wait connecting proc to deal.
     }
-    // else do nothing . wait connecting proc to deal.
 }
 
 
@@ -784,14 +858,19 @@ GM_ERRCODE config_service_destroy(void)
 
 static void config_service_close(void)
 {
-    if(s_config_socket.id >=0)
-    {
-        GM_SocketClose(s_config_socket.id);
-        s_config_socket.id=-1;
-    }
+	if(s_config_socket.id >=0)
+	{
+		if (hard_ware_is_at_command())
+		{
+			at_command_close_connect(s_config_socket.access_id);
+		}
+		else 
+		{
+			GM_SocketClose(s_config_socket.id);
+			s_config_socket.id=-1;
+		}
+	} 
 }
-
-
 
 GM_ERRCODE config_service_timer_proc(void)
 {
@@ -1033,7 +1112,7 @@ void config_msg_content_parse(u8 *pdata, u16 len)
 				json_add_int(p_json_log, (const char*)cmd_string, MKDWORD(msg_buff[0], msg_buff[1], msg_buff[2], msg_buff[3]));
 				break;
 			case 2:
-				json_add_int(p_json_log, (const char*)cmd_string, MKDWORD(msg_buff[0], msg_buff[1], msg_buff[2], msg_buff[3])/1000.0);
+				json_add_double(p_json_log, (const char*)cmd_string, MKDWORD(msg_buff[0], msg_buff[1], msg_buff[2], msg_buff[3])/1000.0);
 				break;
 			case 3:
 				json_add_string(p_json_log, (const char*)cmd_string, (const char*)msg_buff);
@@ -1134,12 +1213,38 @@ static void config_service_set_byte(u16 index, u8 *pMsg, u8 len)
 static void config_service_set_range_word(u16 index, u8 *pMsg, u8 len, u32 min, u32 max)
 {
     U32 dword_value = 0;
+    u16 cur_upload_time;
     if (NULL == pMsg || len < sizeof(U32))
     {
         LOG(INFO,"clock(%d) config_service_set_range_word index(%d) len %d failed.", util_clock(),index,len);
 		return;
     }
     dword_value = MKDWORD(pMsg[0], pMsg[1],pMsg[2], pMsg[3]);
+    
+    if (index == CFG_UPLOADTIME)
+    {
+    	bool gps_close = true;
+		config_service_get((ConfigParamEnum)index, TYPE_SHORT, &cur_upload_time, sizeof(U16));
+	    if (cur_upload_time != dword_value)
+		{
+			if(dword_value == 0)
+			{
+				config_service_set(CFG_GPS_CLOSE,TYPE_BOOL,&gps_close,sizeof(gps_close));
+				enter_sleep_mode();
+			}
+			else
+			{
+				gps_close = false;
+				config_service_set(CFG_GPS_CLOSE,TYPE_BOOL,&gps_close,sizeof(gps_close));
+				if (cur_upload_time == 0)
+				{
+					exit_sleep_mode();
+				}
+			}
+		}
+		config_service_set(CFG_UPLOADTIME_BKP, TYPE_SHORT, &dword_value, sizeof(U16));
+	}
+	
     if (dword_value >= min && dword_value <= max)
     {
         config_service_set((ConfigParamEnum)index, TYPE_SHORT, &dword_value, sizeof(U16));
@@ -1149,6 +1254,7 @@ static void config_service_set_range_word(u16 index, u8 *pMsg, u8 len, u32 min, 
     {
         LOG(WARN,"clock(%d) config_service_set_range_word index(%d) value %d failed.", util_clock(),index,dword_value);
     }
+
 }
 
 static void config_service_set_protocol(u16 index, u8 *pMsg, u8 len)
@@ -1260,7 +1366,7 @@ static void config_service_device_type(u16 index, u8 *pMsg, u8 len)
     {
         if (0 == GM_strcmp((const char*)pMsg, s_config_device[idx].device_str))
         {
-            config_service_set_device((ConfigDeviceTypeEnum)s_config_device[idx].idx);
+        	config_service_set_device((ConfigDeviceTypeEnum)s_config_device[idx].idx,false);
             LOG(INFO,"config_service_device_type (CFG_DEVICETYPE(%d).",s_config_device[idx].idx);
             break;
         }
@@ -1322,6 +1428,7 @@ static void config_msg_param_set(u16 index, u8 *pMsg, u8 len)
 		
         case CFG_UPLOADTIME:
 			config_service_set_range_word((ConfigParamEnum)index, pMsg, sizeof(U32),CONFIG_UPLOAD_TIME_MIN,CONFIG_UPLOAD_TIME_MAX);
+            config_service_set_range_word((ConfigParamEnum)CFG_UPLOADTIME_BKP, pMsg, sizeof(U32),CONFIG_UPLOAD_TIME_MIN,CONFIG_UPLOAD_TIME_MAX);
             break;
 
 		case CFG_HEART_INTERVAL:
@@ -1355,23 +1462,38 @@ static void config_msg_param_set(u16 index, u8 *pMsg, u8 len)
             break;
 		
         case CFG_CUTOFFALM_DISABLE:
-        {
-			//后台配置1是打开0是关闭;设备中存储0是打开1是关闭
-			U8 cut_off_alm_disable = pMsg[0] ? 0 : 1;
-            config_service_set((ConfigParamEnum)index, TYPE_BYTE, &cut_off_alm_disable, sizeof(cut_off_alm_disable));
-        }
+	        {
+				//后台配置1是打开0是关闭;设备中存储0是打开1是关闭
+				U8 cut_off_alm_disable = pMsg[0] ? 0 : 1;
+	            config_service_set((ConfigParamEnum)index, TYPE_BYTE, &cut_off_alm_disable, sizeof(cut_off_alm_disable));
+	        }
             break;
 		
         case CFG_LOWBATTALM_DISABLE:
-        {
-			//后台配置1是打开0是关闭;设备中存储0是打开1是关闭
-			U8 low_batt_alm_disable = pMsg[0] ? 0 : 1;
-            config_service_set((ConfigParamEnum)index, TYPE_BYTE, &low_batt_alm_disable, sizeof(low_batt_alm_disable));
-        }
+	        {
+				//后台配置1是打开0是关闭;设备中存储0是打开1是关闭
+				U8 low_batt_alm_disable = pMsg[0] ? 0 : 1;
+	            config_service_set((ConfigParamEnum)index, TYPE_BYTE, &low_batt_alm_disable, sizeof(low_batt_alm_disable));
+	        }
             break;
 		
         case CFG_SPEEDTHR:
-			config_service_set_byte(index, &pMsg[3], sizeof(U32));
+        	{
+        		bool is_on = false;
+        		
+				if (0 == pMsg[3])
+				{
+					//速度值设置为0时，关闭超速报警开关
+					config_service_set(CFG_SPEED_ALARM_ENABLE, TYPE_BOOL, &is_on, sizeof(is_on));
+				}
+				else if (pMsg[3] >= CONFIG_SPEEDTHR_MIN && pMsg[3] <= CONFIG_SPEEDTHR_MAX)
+				{
+					//速度值在[CONFIG_SPEEDTHR_MIN,CONFIG_SPEEDTHR_MAX]范围内，打开报警开关，并保存速度值
+					is_on = true;
+					config_service_set_byte(index, &pMsg[3], sizeof(U32));
+					config_service_set(CFG_SPEED_ALARM_ENABLE, TYPE_BOOL, &is_on, sizeof(is_on));
+				}
+        	}
 			break;
 
 		case CFG_IS_ACLRALARM_ENABLE:
@@ -1440,6 +1562,22 @@ static void config_msg_param_set(u16 index, u8 *pMsg, u8 len)
 
 		case CFG_MIN_SNR:
 			config_service_set_byte(index, &pMsg[3], sizeof(U32));
+            break;
+        
+		case CFG_LIMIT_RELAY_NUMBER:
+			config_service_set((ConfigParamEnum)index, TYPE_BOOL, pMsg, sizeof(u8));
+			break;
+
+        case CFG_TEMP_SENSOR:
+        	config_service_set_byte(index, &pMsg[3], sizeof(U32));
+            break;
+
+        case CFG_4G_NWSCAN:
+        	config_service_set_byte(index, &pMsg[3], sizeof(U32));
+            break;
+
+        case CFG_SIGNAL_INTERVAL:
+        	config_service_set_range_word((ConfigParamEnum)index, pMsg, sizeof(U32),CONFIG_UPLOAD_TIME_MIN,CONFIG_UPLOAD_TIME_MAX);
             break;
 
         default:
@@ -1549,6 +1687,14 @@ ConfigHearUploadEnum config_service_get_heartbeat_protocol(void)
     }
 }
 
+
+bool config_service_get_gps_close(void)
+{
+	bool gps_close = false;
+	
+	config_service_get(CFG_GPS_CLOSE, TYPE_BOOL, &gps_close, sizeof(gps_close));
+	return gps_close;
+}
 
 S8 config_service_get_zone(void)
 {

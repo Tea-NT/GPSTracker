@@ -110,8 +110,10 @@ void log_service_get_level(LogLevel *log_level, LogLevel *upload_level);
 void log_service_enable_print(bool enable);
 
 
+void log_service_send_result(bool result);
 
 /*由socket层回调*/
+void los_service_close_ok(void);
 void log_service_connection_failed(void);
 void log_service_connection_ok(void);
 void log_service_close_for_reconnect(void);

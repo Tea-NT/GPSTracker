@@ -68,7 +68,7 @@ GM_ERRCODE update_service_timer_proc(void);
  */
 SocketStatus update_service_get_status(void);
 
-
+void update_service_close_ok(void);
 void update_service_connection_failed(void);
 void update_service_connection_ok(void);
 void update_service_finish(u32 wait);
@@ -86,6 +86,8 @@ void update_service_after_blocks_finish(void);
  * Others:	   只有update_service_get_status 得到SOCKET_STATUS_DATA_FINISH时，才可以用此函数判断
  */
 bool update_service_is_waiting_reboot(void);
+void update_service_send_result(bool result);
+
 
 #endif
 

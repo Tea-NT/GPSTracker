@@ -39,6 +39,9 @@
 #include "gps.h"
 #include "command.h"
 #include "auto_test.h"
+#include "at_command.h"
+#include "uart.h"
+#include "gm_timer.h"
 
 //每次串口接收数据内存大小
 #define GM_UART_RCV_BUFF_LEN 1024
@@ -53,6 +56,7 @@ typedef struct
 	time_t last_rcv_time;
 	bool is_open;
 	char rcv_buff[GM_UART_RCV_BUFF_LEN];
+	u16 rcv_len;
 	FifoType rcv_fifo;
 }UARTPara;
 
@@ -68,6 +72,8 @@ static UART g_uart;
 static void debug_port_on_receive(void* msg);
 
 static void gps_port_on_receive(void* msg);
+static void at_port_on_receive(void* msg);
+
 
 
 /**
@@ -92,14 +98,13 @@ GM_ERRCODE uart_create(void)
 		fifo_init(&g_uart.UARTParas[index].rcv_fifo,GM_UART_RCV_FIFO_LEN);
 	}
 	
-	
 	GM_RegisterCallBack(GM_CB_UART1_RECEIVE, (U32)debug_port_on_receive);
 	GM_RegisterCallBack(GM_CB_UART2_RECEIVE, (U32)gps_port_on_receive);
+	GM_RegisterCallBack(GM_CB_UART3_RECEIVE, (U32)at_port_on_receive);
 	
 	g_uart.inited = true;
 
 	uart_open_port(GM_UART_DEBUG,BAUD_RATE_HIGH,0);
-
 	return GM_SUCCESS;
 }
 
@@ -117,7 +122,7 @@ GM_ERRCODE uart_destroy(void)
 	
 	g_uart.inited = false;
 		
-	for (index = GM_UART_DEBUG; index <= GM_UART_GPS; ++index)
+	for (index = GM_UART_DEBUG; index < GM_UART_MAX; ++index)
 	{
 		g_uart.UARTParas[index].baud_rate = 115200;
 		g_uart.UARTParas[index].last_rcv_time = 0;
@@ -241,13 +246,18 @@ GM_ERRCODE uart_close_port(const UARTPort port)
 
 	if (GM_UART_DEBUG == port)
 	{
-		GM_GpioInit(GM_GPIO10, PINDIRECTION_OUT, PINLEVEL_LOW, PINPULLSEL_DISABLE);
-		GM_GpioInit(GM_GPIO11, PINDIRECTION_OUT, PINLEVEL_LOW, PINPULLSEL_DISABLE);
+		GM_GpioInit(GM_GPIO10, PINDIRECTION_IN, PINLEVEL_LOW, PINPULLSEL_DISABLE);
+		GM_GpioInit(GM_GPIO11, PINDIRECTION_IN, PINLEVEL_LOW, PINPULLSEL_DISABLE);
 	}
 	if (GM_UART_GPS == port)
 	{
 		GM_GpioInit(GM_GPIO12, PINDIRECTION_IN, PINLEVEL_LOW, PINPULLSEL_DISABLE);
 		GM_GpioInit(GM_GPIO17, PINDIRECTION_IN, PINLEVEL_LOW, PINPULLSEL_DISABLE);
+	}
+	if (GM_UART_AT == port)
+	{
+		GM_GpioInit(GM_GPIO0, PINDIRECTION_IN, PINLEVEL_LOW, PINPULLSEL_DISABLE);
+		GM_GpioInit(GM_GPIO1, PINDIRECTION_IN, PINLEVEL_LOW, PINPULLSEL_DISABLE);
 	}
 	return GM_SUCCESS;
 }
@@ -292,6 +302,13 @@ GM_ERRCODE uart_write(const UARTPort port, const U8* p_data, const U16 len)
 		return GM_SUCCESS;
 	}
 }
+
+
+FifoType *get_uart_recv_fifo(const UARTPort port)
+{
+	return &g_uart.UARTParas[port].rcv_fifo;
+}
+
 
 static void debug_port_on_receive(void* msg)
 {
@@ -431,5 +448,35 @@ static void gps_port_on_receive(void* msg)
 	}while (read_len >= (GM_UART_RCV_BUFF_LEN - 1));
 	return;
 }
+
+
+
+static void at_port_on_receive(void* msg)
+{
+	S32 len = 0;
+
+	if (false == g_uart.UARTParas[GM_UART_AT].is_open)
+	{
+		return;
+	}
+	
+	g_uart.UARTParas[GM_UART_AT].last_rcv_time = util_clock();	
+	do
+	{
+		GM_memset(g_uart.UARTParas[GM_UART_AT].rcv_buff, 0, GM_UART_RCV_BUFF_LEN);
+		len = GM_UartRead((Enum_SerialPort)GM_UART_AT, (U8*)&g_uart.UARTParas[GM_UART_AT].rcv_buff[g_uart.UARTParas[GM_UART_AT].rcv_len], GM_UART_RCV_BUFF_LEN);
+		if (len > 0)
+		{    
+			fifo_insert(&g_uart.UARTParas[GM_UART_AT].rcv_fifo, (U8*)g_uart.UARTParas[GM_UART_AT].rcv_buff, len);
+		}
+		else
+		{
+			break;
+		}
+	}while (len >= (GM_UART_RCV_BUFF_LEN - 1));
+		 
+	return;
+}
+
 
 

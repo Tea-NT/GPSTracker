@@ -33,12 +33,14 @@
 #include "gm_type.h"
 #include "error_code.h"
 #include "gm_uart.h"
+#include "fifo.h"
 
 typedef enum 
 {
 	GM_UART_DEBUG = UART_PORT1,
 	GM_UART_GPS = UART_PORT2,
-	GM_UART_MAX = 2
+	GM_UART_AT = UART_PORT3,
+	GM_UART_MAX = 3
 }UARTPort;
 
 #define BAUD_RATE_HIGH 115200
@@ -105,6 +107,10 @@ GM_ERRCODE uart_close_port(const UARTPort port);
  * Others:	   
  */
 GM_ERRCODE uart_write(const UARTPort port, const U8* p_data, const U16 len);
+
+
+FifoType *get_uart_recv_fifo(const UARTPort port);
+
 
 #endif
 

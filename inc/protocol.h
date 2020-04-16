@@ -33,6 +33,8 @@ GM_ERRCODE protocol_send_login_msg(SocketType *socket);
 GM_ERRCODE protocol_send_device_msg(SocketType *socket);
 
 GM_ERRCODE protocol_send_logout_msg(SocketType *socket);
+GM_ERRCODE protocol_send_temperature_msg(SocketType *socket);
+GM_ERRCODE protocol_send_signal_msg(SocketType *socket);
 GM_ERRCODE protocol_send_heartbeat_msg(SocketType *socket);
 U32 protocol_send_gps_msg(SocketType *socket);
 

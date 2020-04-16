@@ -800,6 +800,11 @@ static void protocol_jt_pack_alarm_status(u8 *pdata, u16 *idx, u16 len, u16 *ret
 
     sys_state = system_state_get_status_bits();
 
+	
+	if(sys_state & SYSBIT_ALARM_SOS)
+    {
+        SET_BIT0(alarm_state);
+    }
 
     if(sys_state & SYSBIT_ALARM_SPEED)
     {
@@ -1424,9 +1429,10 @@ static void protocol_jt_parse_set_param(U8* pdata, u16 len)
                 break;
             case JT_PARAM_TIME_INTERVAL:
                 value_u16 = (u16)get_value_by_length(&pdata[data_start], para_len);
-                if(value_u16 >= CONFIG_UPLOAD_TIME_MIN && value_u16 <= CONFIG_UPLOAD_TIME_MAX)
+                if(value_u16 <= CONFIG_UPLOAD_TIME_MAX)
                 {
                     config_service_set(CFG_UPLOADTIME, TYPE_SHORT, &value_u16, sizeof(value_u16));
+                    config_service_set(CFG_UPLOADTIME_BKP, TYPE_SHORT, &value_u16, sizeof(value_u16));
                 }
                 else
                 {
@@ -1451,7 +1457,7 @@ static void protocol_jt_parse_set_param(U8* pdata, u16 len)
                     //只修改开关,不修改速度值
                     config_service_set(CFG_SPEED_ALARM_ENABLE, TYPE_BOOL, &value_u8, sizeof(value_u8));
                 }
-                else if(value_u8 >=5 && value_u8 <= 180)
+                else if(value_u8 >=CONFIG_SPEEDTHR_MIN && value_u8 <= CONFIG_SPEEDTHR_MAX)
                 {
                     config_service_set(CFG_SPEEDTHR, TYPE_BYTE, &value_u8, sizeof(value_u8));
 

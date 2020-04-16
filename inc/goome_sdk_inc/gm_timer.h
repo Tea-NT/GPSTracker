@@ -103,7 +103,15 @@ typedef enum
 	GM_TIMER_SELF_CHECK_START,
 
 	GM_TIMER_MAIN_UPLOAD_LOG,
-    
+	
+	GM_TIMER_GPRS_DESTORY_LATER,
+
+	GM_TIMER_WIFI_SCAN,
+
+    GM_TIMER_GPM,
+
+    GM_TIMER_TRACK,
+
     TIMER_ID_END=GM_TIMER_ID_START + 90
 }GM_TIMER_ID;
 
@@ -124,10 +132,8 @@ typedef enum
 #define GM_TICKS_1_MIN             (13000)     /* 1 min */
 
 
-
-
 #define TIM_GEN_1MS               2
-#define TIM_GEN_10MS              10 // 3  // 10
+#define TIM_GEN_10MS              10
 #define TIM_GEN_100MS             100
 #define TIM_GEN_1SECOND           1000
 #define TIM_GEN_1_MIN             60000

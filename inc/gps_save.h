@@ -27,6 +27,8 @@ typedef struct
 #define HIS_FILE_FRAME_SIZE    100  //保存的文件时 , 第一字节是长度, 所以数据最长不超过(HIS_FILE_FRAME_SIZE-1)
 #define SAVE_HIS_MAX_NUM       720
 #define SAVE_CATCH_MAX_NUM     10
+#define RECD_DATA_MAX_LEN      2048
+
 
 
 /**

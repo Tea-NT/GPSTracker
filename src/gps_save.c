@@ -5,6 +5,7 @@
 #include "log_service.h"
 #include "gm_fs.h"
 #include "utility.h"
+#include "hard_ware.h"
 
 typedef struct  // 6460
 {
@@ -611,7 +612,10 @@ void gps_service_confirm_cache(u32 *from, u32 ack_place)
 
     if((*from == 0) && (ack_place == 0))
     {
-        ack_place = 1000000;   //sdk还没支持GM_GetTcpStatus ， 直接confirm 所有数据, 最后, (*from) = ack_place = 0;
+    	if (!hard_ware_is_at_command())
+    	{
+        	ack_place = 1000000;   //sdk还没支持GM_GetTcpStatus ， 直接confirm 所有数据, 最后, (*from) = ack_place = 0;
+        }
         LOG(DEBUG,"clock(%d) gps_service_confirm_cache(%d,%d) cache_data(num:%d)", util_clock(),*from, ack_place, gps_data_get_len(&s_gps_sending));
     }
     

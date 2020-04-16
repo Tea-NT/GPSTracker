@@ -1,4 +1,5 @@
 #include "gm_type.h"
+#include "math.h"
 #include "stdio.h"
 #include "gm_stdlib.h"
 #include "gm_gprs.h"
@@ -12,7 +13,7 @@
 #include "gsm.h"
 #include "config_service.h"
 #include "protocol_goome.h"
-//#include "protocol_concox.h"
+#include "protocol_concox.h"
 #include "protocol_jt808.h"
 #include "gprs.h"
 #include "system_state.h"
@@ -23,7 +24,9 @@
 #include "gps_service.h"
 #include "agps_service.h"
 #include "update_service.h"
-
+#include "at_command.h"
+#include "wifi.h"
+#include "sms.h"
 #define GPS_PING_TIME 60
 
 typedef struct
@@ -36,8 +39,15 @@ typedef struct
 	u32 send_location_counts;  //发送定位数据计数
     u32 data_finish_time;  //进入到SOCKET_STATUS_DATA_FINISH状态的时间
     u32 lbs_send_time;
+    u32 wifi_send_time;
+	bool wifi_send_atonce; //立即上传一条WiFi信息
     u32 saved_socket_ack;  //发消息前，ack的值
     u32 connection_time;  //连接建立时间
+    u32 recorder_send_time;
+    bool temperature_atonce; // 立即发送温度
+    u32 temperature_send_time;   // 温度发送时间
+    s8  last_temperature;  //最近一次发送的温度值
+    u32 signal_send_time; //GPS.GSM信号数据上传时间
 }SocketTypeExtend;
 
 
@@ -55,7 +65,10 @@ static void gps_service_close(void);
 static GM_ERRCODE protocol_pack_gps_msg(GpsDataModeEnum mode, const GPSData *gps, u8 *pdata, u16 *idx, u16 len);
 static GM_ERRCODE protocol_pack_lbs_msg(u8 *pdata, u16 *idx, u16 len);
 static GM_ERRCODE protocol_pack_alarm_msg(AlarmInfo *alarm, u8 *pdata, u16 *idx, u16 len);
+static GM_ERRCODE protocol_pack_device_state_msg(u8 *pdata, u16 *idx, u16 len);
 static GM_ERRCODE protocol_pack_position_request_msg(u8 *mobile_num, u8 num_len, u8 *command, u8 cmd_len,u8 *pdata, u16 *idx, u16 len);
+static GM_ERRCODE protocol_pack_wifi_msg(u8 *pdata, u16 *idx, u16 len);
+
 
 static GM_ERRCODE gps_service_transfer_status(u8 new_status)
 {
@@ -346,6 +359,30 @@ static void gps_service_login_proc(void)
 
 
 
+void report_wifi_lbs(void)
+{
+	u8 work_mode = 0;
+	config_service_get(CFG_WORKMODE, TYPE_BYTE, &work_mode, sizeof(work_mode));
+
+	if (work_mode == 0 && gps_is_fixed())
+	{
+		wifi_destroy();
+		return;
+	}
+	
+	if (get_wifi_scan_ap_num() > 0)
+	{
+		gps_service_push_wifi();
+	}
+	else
+	{
+		gps_service_push_lbs();
+	}
+	wifi_destroy();
+	s_gps_socket_extend.wifi_send_time = util_clock();
+}
+
+
 
 /*
     get msg from fifo
@@ -356,7 +393,11 @@ static void gps_service_work_proc(void)
     u32 current_time = util_clock();
     u16 value_u16;
     bool lbs_enable;
-    U32 send_counts = 0;
+    u32 send_counts = 0;
+    u8 work_mode = 0;
+    u16 upload_time;
+    u8 key_feature;
+    u16 signal_interval;
 
 	//服务模块工作状态并且不是休眠状态LED常亮
 	if (GM_SYSTEM_STATE_WORK == system_state_get_work_state())
@@ -365,32 +406,53 @@ static void gps_service_work_proc(void)
 	}
     
     config_service_get(CFG_IS_LBS_ENABLE, TYPE_BOOL, &lbs_enable, sizeof(lbs_enable));
-    if(lbs_enable && (!gps_is_fixed()))
-    {
-        u16 wait_gps_time = 0;
-        config_service_get(CFG_WAIT_GPS_TIME, TYPE_SHORT, &wait_gps_time, sizeof(wait_gps_time));
-        wait_gps_time = wait_gps_time < SECONDS_PER_MIN ? SECONDS_PER_MIN:wait_gps_time;
-        if((current_time > wait_gps_time) || (s_gps_socket_extend.lbs_send_time > 0))
-        {
-            //启动了足够久（注意一百多天归0） 或已经发过
-            config_service_get(CFG_LBS_INTERVAL, TYPE_SHORT, &value_u16, sizeof(value_u16));
-            if((current_time - s_gps_socket_extend.lbs_send_time) >= value_u16)
-            {
-                gps_service_push_lbs();
-            }
-        }
+    config_service_get(CFG_WORKMODE, TYPE_BYTE, &work_mode, sizeof(work_mode));
+	config_service_get(CFG_UPLOADTIME, TYPE_SHORT, &upload_time, sizeof(upload_time));
+	if (upload_time > 0)
+	{
+	    if (hard_ware_is_device_w() && work_mode != 0)
+	    {
+			if ((s_gps_socket_extend.wifi_send_atonce == true) || ((current_time - s_gps_socket_extend.wifi_send_time) >= upload_time && VEHICLE_STATE_RUN == system_state_get_vehicle_state()))
+	        {
+	        	if (hard_ware_device_has_wifi())
+	        	{
+	            	wifi_create((PsFuncPtr)report_wifi_lbs);
+	            }
+	            else
+	            {
+	            	gps_service_push_lbs();
+	            }
+	            s_gps_socket_extend.wifi_send_atonce = false;
+	            s_gps_socket_extend.wifi_send_time = current_time;
+	        }
+	    }
+	    else if(lbs_enable && (!gps_is_fixed()))
+	    {
+	        u16 wait_gps_time = 0;
+	        config_service_get(CFG_WAIT_GPS_TIME, TYPE_SHORT, &wait_gps_time, sizeof(wait_gps_time));
+	        wait_gps_time = wait_gps_time < SECONDS_PER_MIN ? SECONDS_PER_MIN:wait_gps_time;
+	        if((current_time > wait_gps_time) || (s_gps_socket_extend.lbs_send_time > 0))
+	        {
+	            //启动了足够久（注意一百多天归0） 或已经发过
+	            config_service_get(CFG_LBS_INTERVAL, TYPE_SHORT, &value_u16, sizeof(value_u16));
+	            if((current_time - s_gps_socket_extend.lbs_send_time) >= value_u16)
+	            {
+	                gps_service_push_lbs();
+	            }
+	        }
+	    }
     }
-
 
     if(PROTOCOL_JT808 == config_service_get_app_protocol())
     {
         config_service_get(CFG_JT_HBINTERVAL, TYPE_SHORT, &value_u16, sizeof(value_u16));
         if(value_u16)  // != 0
         {
-            if((current_time - s_gps_socket_extend.heart_locate_send_time) >= value_u16)
+            if((current_time - s_gps_socket_extend.heart_locate_send_time) >= value_u16 || s_gps_socket_extend.heart_atonce)
             {
                 gps_service_send_one_locate(GPS_MODE_FIX_TIME, false);
                 s_gps_socket_extend.heart_locate_send_time = current_time;
+				s_gps_socket_extend.heart_atonce = false;
             }
         }
     }
@@ -403,6 +465,25 @@ static void gps_service_work_proc(void)
 		s_gps_socket_extend.heart_atonce = false;
     }
 
+    config_service_get(CFG_KEY_FEATURE, TYPE_BYTE, &key_feature, sizeof(u8));
+	if (KEY_TEMP == key_feature)
+	{
+		if ((current_time - s_gps_socket_extend.temperature_send_time) >= value_u16 || s_gps_socket_extend.temperature_atonce)
+	    {
+	        protocol_send_temperature_msg(&s_gps_socket);
+	        s_gps_socket_extend.temperature_send_time = current_time;
+			s_gps_socket_extend.temperature_atonce = false;
+			s_gps_socket_extend.last_temperature = hard_ware_get_temperature();
+	    }
+	}
+
+	config_service_get(CFG_SIGNAL_INTERVAL, TYPE_SHORT, &signal_interval, sizeof(signal_interval));
+	if (signal_interval > 0 && (current_time - s_gps_socket_extend.signal_send_time) >= signal_interval)
+	{
+		protocol_send_signal_msg(&s_gps_socket);
+		s_gps_socket_extend.signal_send_time = current_time;
+	}
+	
     /*
         连接建立成功2次心跳间隔后才检测心跳有没有超时
     */
@@ -424,6 +505,20 @@ static void gps_service_work_proc(void)
 }
 
 
+void gps_service_send_result(bool result)
+{
+	if (result)
+	{
+		s_gps_socket.send_time = util_clock();
+	}
+	else
+	{
+		system_state_set_gpss_reboot_reason("gm_socket_send cache_send");
+        gps_service_destroy_gprs();
+	}
+}
+
+
 void gps_service_connection_ok(void)
 {
     u32 current_time = util_clock();
@@ -433,6 +528,39 @@ void gps_service_connection_ok(void)
     protocol_send_login_msg(&s_gps_socket);
     
 }
+
+void gps_service_close_ok(void)
+{
+	s_gps_socket.id=-1;
+    s_gps_socket_extend.saved_socket_ack = s_gps_socket.last_ack_seq = 0;
+    switch(s_gps_socket.status)
+    {
+        case SOCKET_STATUS_INIT:
+            break;
+        case SOCKET_STATUS_CONNECTING:
+            if(s_gps_socket.status_fail_count >= MAX_CONNECT_REPEAT)
+		    {
+		        // if excuted get_host reinit gprs, else get_host.
+		        if(s_gps_socket.excuted_get_host || (s_gps_socket.addr[0] == 0))
+		        {
+		            //  reinit gprs
+		            LOG(DEBUG,"clock(%d) gps_service_connection_failed excuted_get_host(%d)",util_clock(),s_gps_socket.excuted_get_host);
+		            gps_service_destroy_gprs();
+		        }
+		        else
+		        {
+		            gps_service_transfer_status(SOCKET_STATUS_INIT);
+		        }
+		    }
+            break;
+        default:
+			//socket断开后立即重连，不再等待60秒
+            //s_gps_socket_extend.data_finish_time = util_clock();
+        	gps_service_transfer_status(SOCKET_STATUS_DATA_FINISH);
+            break;
+    }
+}
+
 
 void gps_service_close_for_reconnect(void)
 {
@@ -519,7 +647,7 @@ GM_ERRCODE gps_service_create(bool first_create)
         if(util_is_valid_dns(addr, GM_strlen((const char *)addr)))
         {
             gm_socket_set_addr(&s_gps_socket, addr, GM_strlen((const char *)addr), port, STREAM_TYPE_STREAM);
-			system_state_get_ip_cache(SOCKET_INDEX_MAIN, IP);
+	        system_state_get_ip_cache(SOCKET_INDEX_MAIN, IP);
             gm_socket_set_ip_port(&s_gps_socket, IP, port, STREAM_TYPE_STREAM);
         }
         else
@@ -547,6 +675,8 @@ GM_ERRCODE gps_service_create(bool first_create)
     s_gps_socket_extend.data_finish_time = 0;
     s_gps_socket_extend.saved_socket_ack = 0;
     s_gps_socket_extend.lbs_send_time = 0;
+    s_gps_socket_extend.wifi_send_time = 0;
+    s_gps_socket_extend.wifi_send_atonce = false;
 
     LOG(INFO,"clock(%d) gps_service_create access_id(%d) fifo(%p).", util_clock(), s_gps_socket.access_id, &s_gps_socket.fifo);
 
@@ -596,13 +726,19 @@ GM_ERRCODE gps_service_destroy(void)
 static void gps_service_close(void)
 {
     gps_service_save_to_history_file();
-
-    if(s_gps_socket.id >=0)
-    {
-        GM_SocketClose(s_gps_socket.id);
-        s_gps_socket.id=-1;
-        s_gps_socket_extend.saved_socket_ack = s_gps_socket.last_ack_seq = 0;
-    }
+	if(s_gps_socket.id >=0)
+	{
+		if (hard_ware_is_at_command())
+		{
+			at_command_close_connect(s_gps_socket.access_id);
+		}
+		else 
+		{
+			GM_SocketClose(s_gps_socket.id);
+			s_gps_socket.id=-1;
+		}
+   	 	s_gps_socket_extend.saved_socket_ack = s_gps_socket.last_ack_seq = 0;
+	}
 }
 
 
@@ -743,6 +879,9 @@ static GM_ERRCODE protocol_pack_gps_msg(GpsDataModeEnum mode, const GPSData *gps
     case PROTOCOL_GOOME:
         protocol_goome_pack_gps_msg(mode, gps, pdata, idx, len);  //17 bytes
         break;
+    case PROTOCOL_CONCOX:
+        protocol_concox_pack_gps_msg(mode, gps, pdata, idx, len); // 39 bytes
+        break;
     case PROTOCOL_JT808:
         protocol_jt_pack_gps_msg(mode, gps, pdata, idx, len);  // 53 bytes
         break;
@@ -755,6 +894,7 @@ static GM_ERRCODE protocol_pack_gps_msg(GpsDataModeEnum mode, const GPSData *gps
 
 GM_ERRCODE gps_service_cache_send(u8 *data, u8 len)
 {
+	GM_ERRCODE ret;
     gps_service_confirm_gps_cache(&s_gps_socket);
 
     if(GM_SUCCESS == gps_service_save_to_cache(data, len))
@@ -765,12 +905,13 @@ GM_ERRCODE gps_service_cache_send(u8 *data, u8 len)
             u8 buff[HIS_FILE_FRAME_SIZE*2];
             u16 buf_len = sizeof(buff);
             protocol_jt_pack_escape(data, len, buff, &buf_len);
-            if(GM_SUCCESS == gm_socket_send(&s_gps_socket, buff, buf_len))
+            ret = gm_socket_send(&s_gps_socket, buff, buf_len);
+            if(GM_SUCCESS == ret)
             {
                 s_gps_socket.send_time = util_clock();
                 return GM_SUCCESS;
             }
-            else
+            else if (GM_MEM_NOT_ENOUGH != ret)
             {
                 system_state_set_gpss_reboot_reason("gm_socket_send cache_send");
                 gps_service_destroy_gprs();
@@ -779,12 +920,13 @@ GM_ERRCODE gps_service_cache_send(u8 *data, u8 len)
         }
         else
         {
-            if(GM_SUCCESS == gm_socket_send(&s_gps_socket, data, len))
+        	ret = gm_socket_send(&s_gps_socket, data, len);
+            if(GM_SUCCESS == ret)
             {
                 s_gps_socket.send_time = util_clock();
                 return GM_SUCCESS;
             }
-            else
+            else if (GM_MEM_NOT_ENOUGH != ret)
             {
                 system_state_set_gpss_reboot_reason("gm_socket_send cache_send");
                 gps_service_destroy_gprs();
@@ -797,7 +939,11 @@ GM_ERRCODE gps_service_cache_send(u8 *data, u8 len)
 
 void gps_service_confirm_gps_cache(SocketType *socket)
 {
-    gm_socket_get_ackseq(socket, &socket->last_ack_seq);
+	if (!hard_ware_is_at_command())
+	{
+		//AT指令不支持获取ack_seq，发送成功直接累加
+		gm_socket_get_ackseq(socket, &socket->last_ack_seq);
+	}
     if(socket->access_id != SOCKET_INDEX_MAIN)
     {
         return;
@@ -820,13 +966,13 @@ GM_ERRCODE gps_service_push_gps(GpsDataModeEnum mode, const GPSData *gps)
         return GM_PARAM_ERROR;
     }
 
-	LOG(DEBUG,"Report GPS,LAT:%f,LNG:%f,SPEED:%f,COURSE:%f,SATES:%d,PRECI:%f,SIGNAL:%d",
+	LOG(INFO,"Report GPS,LAT:%f,LNG:%f,SPEED:%f,COURSE:%f,SATES:%d,HDOP:%f,SIGNAL:%d",
 		gps->lat,
 		gps->lng,
 		gps->speed,
 		gps->course,
-		gps->satellites,
-		gps->precision,
+		gps->satellites_tracked,
+		gps->hdop,
 		gps->signal_intensity_grade);
 
     config_service_get(CFG_GPS_CLOSE, TYPE_BOOL, &gps_close, sizeof(gps_close));
@@ -863,12 +1009,19 @@ void gps_service_heart_atonce(void)
 	s_gps_socket_extend.heart_atonce = true;
 }
 
+void gps_service_wifi_atonce(void)
+{
+	LOG(INFO,"gps_service_wifi_atonce");
+	s_gps_socket_extend.wifi_send_atonce = true;
+}
+
 GM_ERRCODE gps_service_send_one_locate(GpsDataModeEnum mode, bool use_lbs)
 {
     u8 buff[HIS_FILE_FRAME_SIZE];
     u16 len = sizeof(buff);
     u16 idx = 0;
     GPSData gps;
+    GM_ERRCODE ret;
 
     LOG(DEBUG,"clock(%d) gps_service_send_one_locate mode(%d) use_lbs(%d).",util_clock(), mode, use_lbs);
     if(s_gps_socket.status != SOCKET_STATUS_LOGIN && s_gps_socket.status != SOCKET_STATUS_WORK)
@@ -893,12 +1046,13 @@ GM_ERRCODE gps_service_send_one_locate(GpsDataModeEnum mode, bool use_lbs)
             if(SOCKET_STATUS_WORK == s_gps_socket.status)
             {
                 LOG(DEBUG,"clock(%d) gps_service_send_one_locate lbs msglen(%d)", util_clock(), idx);
-                if(GM_SUCCESS == gm_socket_send(&s_gps_socket, buff, idx))
+                ret = gm_socket_send(&s_gps_socket, buff, idx);
+                if(GM_SUCCESS == ret)
                 {
                     s_gps_socket.send_time = util_clock();
                     return GM_SUCCESS;
                 }
-                else
+                else if (GM_MEM_NOT_ENOUGH != ret)
                 {
                     system_state_set_gpss_reboot_reason("gm_socket_send one_locate");
                     gps_service_destroy_gprs();
@@ -912,6 +1066,7 @@ GM_ERRCODE gps_service_send_one_locate(GpsDataModeEnum mode, bool use_lbs)
     //已定位,或不用lbs
     GM_memset(&gps,0,sizeof(gps));
     gps_get_last_data(&gps);
+	gps_find_optimal_data_by_time_and_hdop(&gps);
     if(gps.gps_time == (time_t)0)
     {
         system_state_get_last_gps(&gps);
@@ -948,14 +1103,15 @@ GM_ERRCODE gps_service_send_one_locate(GpsDataModeEnum mode, bool use_lbs)
     if(SOCKET_STATUS_WORK == s_gps_socket.status)
     {
         LOG(DEBUG,"clock(%d) gps_service_send_one_locate gps msglen(%d)", util_clock(), idx);
-        if(GM_SUCCESS == gm_socket_send(&s_gps_socket, buff, idx))
+        ret = gm_socket_send(&s_gps_socket, buff, idx);
+        if(GM_SUCCESS == ret)
         {
             s_gps_socket.send_time = util_clock();
             return GM_SUCCESS;
         }
-        else
+        else if (GM_MEM_NOT_ENOUGH != ret)
         {
-            system_state_set_gpss_reboot_reason("gm_socket_send onelocate");
+            system_state_set_gpss_reboot_reason("gm_socket_send one_locate");
             gps_service_destroy_gprs();
         }
     }
@@ -964,12 +1120,24 @@ GM_ERRCODE gps_service_send_one_locate(GpsDataModeEnum mode, bool use_lbs)
 }
 
 
+GM_ERRCODE gps_service_temperature_atonce(void)
+{
+	LOG(INFO,"gps_service_temperature_atonce");
+	s_gps_socket_extend.temperature_atonce = true;
+	return GM_SUCCESS;
+}
+
+
+
 static GM_ERRCODE protocol_pack_lbs_msg(u8 *pdata, u16 *idx, u16 len)
 {
     switch(config_service_get_app_protocol())
     {
     case PROTOCOL_GOOME:
         protocol_goome_pack_lbs_msg(pdata, idx, len);  //47 bytes
+        break;
+    case PROTOCOL_CONCOX:
+        protocol_concox_pack_lbs_msg(pdata, idx, len); //63 bytes
         break;
     case PROTOCOL_JT808:
         protocol_jt_pack_lbs_msg(pdata, idx, len);  // max 97 bytes
@@ -1011,12 +1179,186 @@ GM_ERRCODE gps_service_push_lbs(void)
 }
 
 
+static GM_ERRCODE protocol_pack_wifi_msg(u8 *pdata, u16 *idx, u16 len)
+{
+    switch(config_service_get_app_protocol())
+    {
+    case PROTOCOL_GOOME:
+        protocol_goome_pack_wifi_msg(pdata, idx, len);  //82 bytes
+        break;
+    case PROTOCOL_CONCOX:
+    case PROTOCOL_JT808:
+    default:
+        LOG(WARN,"clock(%d) protocol_pack_wifi_msg assert(app protocol(%d)) failed.",util_clock(), config_service_get_app_protocol());
+        return GM_SYSTEM_ERROR;
+    }
+    return GM_SUCCESS;
+}
+
+
+
+GM_ERRCODE gps_service_push_wifi(void)
+{
+	u8 buff[HIS_FILE_FRAME_SIZE];
+	u16 len = sizeof(buff);
+	u16 idx = 0;
+
+	s_gps_socket_extend.wifi_send_time = util_clock();
+	
+	if(GM_SUCCESS != protocol_pack_wifi_msg(buff, &idx, len))
+	{
+		return GM_SYSTEM_ERROR;
+	}
+
+	len=idx;  // idx is msg len
+
+	if(SOCKET_STATUS_WORK == s_gps_socket.status)
+	{
+		LOG(DEBUG,"clock(%d) gps_service_push_wifi msglen(%d)", util_clock(), idx);
+		if(GM_SUCCESS == gps_service_cache_send(buff, idx))
+		{
+			return GM_SUCCESS;
+		}
+	}
+
+	return gps_service_push_to_stack(buff, idx);
+}
+
+
+#ifdef _SW_SUPPORT_RECORD_
+static GM_ERRCODE protocol_pack_recorder_response_msg(bool start, u8 *pdata, u16 *idx, u16 len)
+{
+    switch(config_service_get_app_protocol())
+    {
+    case PROTOCOL_GOOME:
+        protocol_goome_pack_recorder_response_msg(start, pdata, idx, len);  //47 bytes
+        break;
+    case PROTOCOL_CONCOX:
+    case PROTOCOL_JT808:
+    default:
+        LOG(WARN,"clock(%d) protocol_pack_lbs_msg assert(app protocol(%d)) failed.",util_clock(), config_service_get_app_protocol());
+        return GM_SYSTEM_ERROR;
+    }
+    return GM_SUCCESS;
+}
+
+
+
+GM_ERRCODE gps_service_push_recorder_response_state(bool start)
+{
+	u8 buff[HIS_FILE_FRAME_SIZE];
+	u16 len = sizeof(buff);
+	u16 idx = 0;
+
+	s_gps_socket_extend.recorder_send_time = util_clock();
+	
+	if(GM_SUCCESS != protocol_pack_recorder_response_msg(start, buff, &idx, len))
+	{
+		return GM_SYSTEM_ERROR;
+	}
+
+	len=idx;  // idx is msg len
+
+	if(SOCKET_STATUS_WORK == s_gps_socket.status)
+	{
+		LOG(DEBUG,"clock(%d) gps_service_push_recorder_response_state msglen(%d)", util_clock(), idx);
+		if(GM_SUCCESS == gps_service_cache_send(buff, idx))
+		{
+			return GM_SUCCESS;
+		}
+	}
+
+	return gps_service_push_to_stack(buff, idx);
+}
+
+
+
+static GM_ERRCODE protocol_pack_recorder_file_msg(void *arg, u8 *pdata, u16 *idx, u16 len)
+{
+    switch(config_service_get_app_protocol())
+    {
+    case PROTOCOL_GOOME:
+        protocol_goome_pack_recorder_file_msg(arg, pdata, idx, len);
+        break;
+    case PROTOCOL_CONCOX:
+    case PROTOCOL_JT808:
+    default:
+        LOG(WARN,"clock(%d) protocol_pack_lbs_msg assert(app protocol(%d)) failed.",util_clock(), config_service_get_app_protocol());
+        return GM_SYSTEM_ERROR;
+    }
+    return GM_SUCCESS;
+}
+
+
+
+GM_ERRCODE gps_service_send_one_recorder_file_pack(void *arg)
+{
+    u8 *buff;
+    //u16 len = 0;
+    u16 idx = 0;
+
+    LOG(DEBUG,"clock(%d) gps_service_send_one_recorder_file_pack.",util_clock());
+    if(s_gps_socket.status != SOCKET_STATUS_LOGIN && s_gps_socket.status != SOCKET_STATUS_WORK)
+    {
+        LOG(WARN,"clock(%d) gps_service_send_one_recorder_file_pack socket->status(%s) error.", util_clock(), gm_socket_status_string((SocketStatus)s_gps_socket.status));
+        return GM_PARAM_ERROR;
+    }
+
+    buff = GM_MemoryAlloc(RECD_DATA_MAX_LEN);
+    if (!buff)
+    {
+        LOG(WARN,"clock(%d) gps_service_send_one_recorder_file_pack GM_MemoryAlloc fail.", util_clock());
+        return GM_SYSTEM_ERROR;
+    }
+
+    GM_memset(buff, 0x00, RECD_DATA_MAX_LEN);
+
+    if(GM_SUCCESS != protocol_pack_recorder_file_msg(arg, buff, &idx, RECD_DATA_MAX_LEN))
+	{
+		GM_MemoryFree(buff);
+		buff = NULL;
+		return GM_SYSTEM_ERROR;
+	}
+    
+    //len=idx;  // idx is msg len
+
+    if(SOCKET_STATUS_WORK == s_gps_socket.status)
+    {
+        LOG(DEBUG,"clock(%d) gps_service_send_one_recorder_file_pack msglen(%d)", util_clock(), idx);
+        if(GM_SUCCESS == gm_socket_send(&s_gps_socket, buff, idx))
+        {
+            s_gps_socket.send_time = util_clock();
+            GM_MemoryFree(buff);
+			buff = NULL;
+			return GM_SUCCESS;
+        }
+        /*
+        else
+        {
+            system_state_set_gpss_reboot_reason("gm_socket_send one_recorder_file");
+            gps_service_destroy_gprs();
+        }*/
+    }
+
+    
+    GM_MemoryFree(buff);
+	buff = NULL;
+	
+    return GM_MEM_NOT_ENOUGH;
+}
+#endif
+
+
+
 static GM_ERRCODE protocol_pack_alarm_msg(AlarmInfo *alarm,u8 *pdata, u16 *idx, u16 len)
 {
     switch(config_service_get_app_protocol())
     {
     case PROTOCOL_GOOME:
         protocol_goome_pack_alarm_msg(alarm, pdata, idx, len);  //35 bytes
+        break;
+    case PROTOCOL_CONCOX:
+        protocol_concox_pack_alarm_msg(alarm, pdata, idx, len);   //42 bytes
         break;
     case PROTOCOL_JT808:
         protocol_jt_pack_gps_msg2(pdata, idx, len);  // 53 bytes
@@ -1028,8 +1370,122 @@ static GM_ERRCODE protocol_pack_alarm_msg(AlarmInfo *alarm,u8 *pdata, u16 *idx, 
     return GM_SUCCESS;
 }
 
+/**
+ * 短信报警
+*/
+static GM_ERRCODE gps_service_push_sms_alarm(AlarmInfo *alarm)
+{
+    //GM_ERRCODE content;
+    u16 lencont = 0;
+    u8 imei[GM_IMEI_LEN + 1] = {0};
+    char *number = NULL;
+    u8 number_index = 0;
+    u8 buff[1024] = {0};
+    u8 zone = 0;
+    u8 bcd_tim[6] = {0};
+    ST_Time current_time;
+    GPSData gps;
+    //获取imei
+    gsm_get_imei(imei);
+    //获取本地时间
+    zone = config_service_get_zone();
+    util_get_current_local_time(bcd_tim, &current_time, zone);
+    //GPS
+    GM_memset(&gps,0,sizeof(gps));
+    gps_get_last_data(&gps);
+    if(gps.gps_time == (time_t)0)
+    {
+        system_state_get_last_gps(&gps);
+    }
+    
+    if(gps.gps_time == (time_t)0)
+    {
+        gps.lat = agps_service_get_unfix_lat();
+        gps.lng = agps_service_get_unfix_lng();
+    }
 
+    lencont += GM_snprintf((char*)buff, 1023,"IMEI:%s,Time:%d-%02d-%02d %02d:%02d:%02d,AlarmType:", imei,current_time.year,current_time.month,current_time.day,current_time.hour,current_time.minute,current_time.second);
+    
+    
+    switch (alarm->type)
+    {
+        case ALARM_POWER_OFF:
+            lencont += GM_snprintf((char*)&buff[lencont],1023-lencont, "POWER OFF");
+            break;
+        case ALARM_BATTERY_LOW:
+            lencont += GM_snprintf((char*)&buff[lencont],1023-lencont, "BATTERY LOW");
+            break;
+        case ALARM_SHOCK:
+            lencont += GM_snprintf((char*)&buff[lencont],1023-lencont, "SHOCK");
+            break;
+        case ALARM_MOVE:
+            lencont += GM_snprintf((char*)&buff[lencont],1023-lencont, "MOVE");
+            break;
+        case ALARM_SPEED:
+            lencont += GM_snprintf((char*)&buff[lencont],1023-lencont, "SPEED");
+            break;
+        case ALARM_FAKE_CELL:
+            lencont += GM_snprintf((char*)&buff[lencont],1023-lencont, "FAKE CELL");
+            break;
+        case ALARM_POWER_HIGH:
+            lencont += GM_snprintf((char*)&buff[lencont],1023-lencont, "POWER HIGH");
+            break;
+        case ALARM_COLLISION:
+            lencont += GM_snprintf((char*)&buff[lencont],1023-lencont, "COLLISION");
+            break;
+        case ALARM_SPEED_UP:
+            lencont += GM_snprintf((char*)&buff[lencont],1023-lencont, "SPEED UP");
+            break;
+        case ALARM_SPEED_DOWN:
+            lencont += GM_snprintf((char*)&buff[lencont],1023-lencont, "SPEED DOWN");
+            break;
+        case ALARM_TURN_OVER:
+            lencont += GM_snprintf((char*)&buff[lencont],1023-lencont, "TURN OVER");
+            break;
+        case ALARM_SHARP_TURN:
+            lencont += GM_snprintf((char*)&buff[lencont],1023-lencont, "SHARP TURN");
+            break;
+        case ALARM_SOS:
+            lencont += GM_snprintf((char*)&buff[lencont],1023-lencont, "SOS");
+            break;
+        default:
+            lencont += GM_snprintf((char*)&buff[lencont],1023-lencont, "REMOVE");
+            break;
+    }
 
+    
+    if(fabs(gps.lat) < 0.00001f)
+    {
+        // prevent send not located position.
+        lencont += GM_snprintf((char*)&buff[lencont],1023-lencont, ",Address:null");
+    }
+    else
+    {
+        u8 ns = 'N';
+        u8 ew = 'E';
+        if(gps.lat<0)
+        {
+            ns ='S';
+        }
+        if(gps.lng<0)
+        {
+            ew = 'W';
+        }
+        lencont += GM_snprintf((char*)&buff[lencont],1023-lencont, ",Address:<%02d-%02d %02d:%02d>",current_time.month,current_time.day,current_time.hour,current_time.minute);
+        lencont += GM_snprintf((char*)&buff[lencont],1023-lencont, "http://maps.google.com/maps?q=%c%.6f,%c%.6f",ns,fabs(gps.lat),ew,fabs(gps.lng));
+    }
+
+	for(number_index=0; number_index<3; number_index++)
+	{
+		number = config_service_get_pointer((ConfigParamEnum)(CFG_USER1_NUMBER+number_index));
+	    if (GM_strlen(number) >= 3)
+	    {
+	    	sms_send((char*)buff,lencont,number,GM_DEFAULT_DCS);
+	    }
+	}
+
+    return GM_SUCCESS;
+}
 
 GM_ERRCODE gps_service_push_alarm(AlarmInfo *alarm)
 {
@@ -1037,7 +1493,9 @@ GM_ERRCODE gps_service_push_alarm(AlarmInfo *alarm)
     u16 len = sizeof(buff);
     u16 idx = 0;
 
-	//不定位不报警,很可能造成断电报警丢失
+    gps_service_push_sms_alarm(alarm);
+
+    //不定位不报警,很可能造成断电报警丢失
 	//先报上去,等GPS定位了也会上报位置的——王志华
 
     if(GM_SUCCESS != protocol_pack_alarm_msg(alarm, buff, &idx, len))
@@ -1061,12 +1519,59 @@ GM_ERRCODE gps_service_push_alarm(AlarmInfo *alarm)
 }
 
 
+static GM_ERRCODE protocol_pack_device_state_msg(u8 *pdata, u16 *idx, u16 len)
+{
+    switch(config_service_get_app_protocol())
+    {
+    case PROTOCOL_GOOME:
+        protocol_goome_pack_device_state_msg(pdata, idx, len);
+        break;
+    default:
+        LOG(WARN,"clock(%d) protocol_pack_device_state_msg assert(app protocol(%d)) failed.", util_clock(), config_service_get_app_protocol());
+        return GM_SYSTEM_ERROR;
+    }
+    return GM_SUCCESS;
+}
+
+
+
+GM_ERRCODE gps_service_report_device_state(void)
+{
+	u8 buff[HIS_FILE_FRAME_SIZE];
+	u16 len = sizeof(buff);
+	u16 idx = 0;
+
+	if(GM_SUCCESS != protocol_pack_device_state_msg(buff, &idx, len))
+	{
+		LOG(ERROR,"Failed to gps_service_report_device_state!");
+		return GM_SYSTEM_ERROR;
+	}
+
+	len=idx;
+
+	if(SOCKET_STATUS_WORK == s_gps_socket.status)
+	{
+		LOG(DEBUG,"clock(%d) gps_service_report_device_state msglen(%d)", util_clock(), len);
+		if(GM_SUCCESS == gps_service_cache_send(buff, idx))
+		{
+			return GM_SUCCESS;
+		}
+	}
+
+	return gps_service_push_to_stack(buff, idx);
+}
+
+
+
 static GM_ERRCODE protocol_pack_position_request_msg(u8 *mobile_num, u8 num_len, u8 *command, u8 cmd_len,u8 *pdata, u16 *idx, u16 len)
 {
     switch(config_service_get_app_protocol())
     {
     case PROTOCOL_GOOME:
         protocol_goome_pack_position_request_msg(mobile_num,num_len,command,cmd_len, pdata, idx, len);  //53+cmd_len bytes
+        break;
+    case PROTOCOL_CONCOX:
+        protocol_concox_pack_position_request_msg(mobile_num,num_len,command,cmd_len, pdata, idx, len);   //45 bytes
         break;
     default:
         LOG(WARN,"clock(%d) gps_service_push_position_request assert(app protocol(%d)) failed.", util_clock(), config_service_get_app_protocol());
@@ -1083,6 +1588,7 @@ GM_ERRCODE gps_service_push_position_request(u8 *mobile_num, u8 num_len, u8 *com
     u8 buff[HIS_FILE_FRAME_SIZE];
     u16 len = sizeof(buff);
     u16 idx = 0;
+    GM_ERRCODE ret;
 
     if(GM_SUCCESS != protocol_pack_position_request_msg(mobile_num,num_len,command,cmd_len, buff, &idx, len))
     {
@@ -1095,15 +1601,16 @@ GM_ERRCODE gps_service_push_position_request(u8 *mobile_num, u8 num_len, u8 *com
     if(SOCKET_STATUS_WORK == s_gps_socket.status)
     {
         LOG(DEBUG,"clock(%d) gps_service_push_position_request msglen(%d) mobile_num(%s)", util_clock(), len,mobile_num);
-        if(GM_SUCCESS == gm_socket_send(&s_gps_socket, buff, len))
+        ret = gm_socket_send(&s_gps_socket, buff, len);
+        if(GM_SUCCESS == ret)
         {
             s_gps_socket.send_time = util_clock();
             return GM_SUCCESS;
         }
-        else
+        else if (GM_MEM_NOT_ENOUGH != ret)
         {
             LOG(WARN,"Failed to send data by socket!");
-            system_state_set_gpss_reboot_reason("gm_socket_send position_req");
+            system_state_set_gpss_reboot_reason("gm_socket_send one_locate");
             gps_service_destroy_gprs();
         }
     }
@@ -1126,6 +1633,7 @@ void gps_service_after_register_response(void)
 void gps_service_after_login_response(void)
 {	
 	JsonObject* p_json_log = json_create();
+	u8 work_mode;
 	
     char ip_str[16] = {0};
 	U8* ip = gps_service_get_current_ip();
@@ -1144,7 +1652,17 @@ void gps_service_after_login_response(void)
     
     protocol_send_heartbeat_msg(&s_gps_socket);
     s_gps_socket_extend.heart_locate_send_time = s_gps_socket_extend.heart_send_time = util_clock();
-
+	config_service_get(CFG_WORKMODE, TYPE_BYTE, &work_mode, sizeof(work_mode));
+	if (work_mode != 0 && hard_ware_is_device_w())
+	{
+	    s_gps_socket_extend.wifi_send_time = util_clock();
+	    if (false == system_state_has_reported_lbs_since_boot() && false == system_state_has_reported_gps_since_boot())
+	    {
+	    	gps_service_wifi_atonce();
+	    	system_state_set_has_reported_lbs_since_boot(true);
+	    }
+    }
+    
     if(PROTOCOL_JT808 == config_service_get_app_protocol())
     {
         gps_service_send_one_locate(GPS_MODE_FIX_TIME, false);
@@ -1240,5 +1758,27 @@ U8* gps_service_get_current_ip(void)
 {
 	return s_gps_socket.ip;
 }
+
+
+s8 gps_service_get_last_temperature(void)
+{
+	return s_gps_socket_extend.last_temperature;
+}
+
+/*
+防止从心跳间隔长设置到短时，会导致长时间未收到心跳而重启
+180s-->10s，在心跳发送100s后设置，会触发gprs_check_need_reboot工作而重启
+在设置心跳时，将心跳时间复位
+*/
+GM_ERRCODE gps_service_set_heart_receive_time(u32 time)
+{
+	if(SOCKET_STATUS_LOGIN != s_gps_socket.status && SOCKET_STATUS_WORK != s_gps_socket.status)
+    {
+        return GM_ERROR_STATUS;
+    }
+	s_gps_socket_extend.heart_receive_time = time;
+	return GM_SUCCESS;
+}
+
 
 

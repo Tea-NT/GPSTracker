@@ -7,13 +7,14 @@
 #include "protocol.h"
 #include "protocol_goome.h"
 #include "protocol_jt808.h"
-//#include "protocol_concox.h"
+#include "protocol_concox.h"
 #include "log_service.h"
 #include "config_service.h"
 #include "gps_save.h"
 #include "gprs.h"
 #include "gm_gprs.h"
 #include "system_state.h"
+#include "hard_ware.h"
 
 static bool protocol_msg_skiped_wrong(SocketType *socket, u8 *check, u16 check_len, u8 *head, u16 head_len)
 {
@@ -143,6 +144,24 @@ void protocol_msg_receive(SocketType *socket)
         msg_len = MKWORD(head[3], head[4]);
         msg_len = msg_len + 5;
         break;
+    case PROTOCOL_CONCOX:
+        if(PROTOCOL_HEADER_CONCOX == head[0] && PROTOCOL_HEADER_CONCOX == head[1])
+        {
+            msg_len = head[2];
+            msg_len += 5;
+        }
+        else if(PROTOCOL_HEADER_CONCOX_NEW == head[0] && PROTOCOL_HEADER_CONCOX_NEW == head[1])
+        {
+            msg_len = MKWORD(head[2], head[3]);
+            msg_len += 6;
+        }
+        else
+        {
+            LOG(WARN,"clock(%d) protocol_msg_receive assert(PROTOCOL_CONCOX protocol(%d) head(%02x)) failed.", 
+                util_clock(), config_service_get_app_protocol(), head[0]);
+            return;
+        }
+        break;
     case PROTOCOL_JT808:
     {
         u8 check[1] = {0x7e};
@@ -231,6 +250,10 @@ void protocol_msg_receive(SocketType *socket)
     case PROTOCOL_GOOME:  // PROTOCOL_HEADER_GOOME
         protocol_goome_parse_msg(pdata,  msg_len);
         break;
+    case PROTOCOL_CONCOX:
+        log_service_print_hex((const char *)pdata, msg_len);
+        protocol_concox_parse_msg(pdata,  msg_len);
+        break;
     case PROTOCOL_JT808:
         protocol_jt_parse_msg(pdata,  msg_len);
         break;
@@ -253,6 +276,7 @@ GM_ERRCODE protocol_send_login_msg(SocketType *socket)
     u16 len = sizeof(buff);
     u16 idx = 0;
     u8 value_u8 = 0;
+    GM_ERRCODE ret;
     
     GM_memset(buff, 0x00, sizeof(buff));
 
@@ -260,6 +284,9 @@ GM_ERRCODE protocol_send_login_msg(SocketType *socket)
     {
     case PROTOCOL_GOOME:
         protocol_goome_pack_login_msg(buff, &idx, len);  //16 bytes
+        break;
+    case PROTOCOL_CONCOX:
+        protocol_concox_pack_login_msg(buff, &idx, len);  // PROTOCOL_VER_GT02 22bytes.    other 18bytes
         break;
     case PROTOCOL_JT808:
         config_service_get(CFG_JT_ISREGISTERED, TYPE_BOOL, &value_u8, sizeof(value_u8));
@@ -283,7 +310,8 @@ GM_ERRCODE protocol_send_login_msg(SocketType *socket)
 
     socket->send_time = util_clock();
     LOG(DEBUG,"clock(%d) protocol_send_login_msg len(%d) protocol(%d).", util_clock(), len, config_service_get_app_protocol());
-    if(GM_SUCCESS != gm_socket_send(socket, buff, idx))
+	ret = gm_socket_send(socket, buff, idx);
+    if(GM_SUCCESS != ret && GM_MEM_NOT_ENOUGH != ret)
     {
         system_state_set_gpss_reboot_reason("gm_socket_send login");
         gps_service_destroy_gprs();
@@ -299,6 +327,7 @@ GM_ERRCODE protocol_send_device_msg(SocketType *socket)
     u8 buff[50];
     u16 len = sizeof(buff);
     u16 idx = 0;
+    GM_ERRCODE ret;
 
     if(socket->status != SOCKET_STATUS_LOGIN && socket->status != SOCKET_STATUS_WORK)
     {
@@ -311,6 +340,9 @@ GM_ERRCODE protocol_send_device_msg(SocketType *socket)
     case PROTOCOL_GOOME:
         protocol_goome_pack_iccid_msg(buff, &idx, len);  //17 bytes
         break;
+    case PROTOCOL_CONCOX:
+        protocol_concox_pack_device_status_msg(buff, &idx, len);  //38bytes
+        break;
     case PROTOCOL_JT808:
         protocol_jt_pack_iccid_msg(buff, &idx, len);  // max 39 bytes
         break;
@@ -321,9 +353,24 @@ GM_ERRCODE protocol_send_device_msg(SocketType *socket)
 
     len=idx;  // idx is msg len
 
+    if (hard_ware_is_at_command())
+    {
+    	u8 iccid[30] = {0};
+    	u8 imsi[20] = {0};
+    	JsonObject* p_log_root = json_create();
+		
+		gsm_get_iccid(iccid);
+		gsm_get_imsi(imsi);
+		json_add_string(p_log_root, "event", "device message");
+		json_add_string(p_log_root, "iccid", (char*)iccid);
+		json_add_string(p_log_root, "imsi", (char*)imsi);
+		json_add_int(p_log_root, "csq", gsm_get_csq());
+    }
+
     socket->send_time = util_clock();
     LOG(DEBUG,"clock(%d) protocol_send_device_msg len(%d) protocol(%d).", util_clock(), len, config_service_get_app_protocol());
-    if(GM_SUCCESS != gm_socket_send(socket, buff, idx))
+    ret = gm_socket_send(socket, buff, idx);
+    if(GM_SUCCESS != ret && GM_MEM_NOT_ENOUGH != ret)
     {
         system_state_set_gpss_reboot_reason("gm_socket_send devmsg");
         gps_service_destroy_gprs();
@@ -334,11 +381,109 @@ GM_ERRCODE protocol_send_device_msg(SocketType *socket)
 }
 
 
+GM_ERRCODE protocol_send_temperature_msg(SocketType *socket)
+{
+    u8 buff[100];
+    u16 len = sizeof(buff);
+    u16 idx = 0;
+
+    if(socket->status != SOCKET_STATUS_LOGIN && socket->status != SOCKET_STATUS_WORK)
+    {
+        LOG(WARN,"clock(%d) protocol_send_temperature_msg socket->status(%s) error.", util_clock(), gm_socket_status_string((SocketStatus)socket->status));
+        return GM_PARAM_ERROR;
+    }
+
+    GM_memset(buff, 0x00, sizeof(buff));
+    switch(config_service_get_app_protocol())
+    {
+    case PROTOCOL_GOOME:
+        protocol_goome_pack_temperature_msg(buff, &idx, len);  //17 bytes
+        break;
+    case PROTOCOL_CONCOX:
+        break;
+    case PROTOCOL_JT808:
+        break;
+    default:
+        LOG(WARN,"clock(%d) protocol_send_temperature_msg assert(app protocol(%d)) failed.", util_clock(), config_service_get_app_protocol());
+        return GM_PARAM_ERROR;
+    }
+
+	if (idx == 0)
+	{
+		return GM_PARAM_ERROR;
+	}
+	
+    len=idx;  // idx is msg len
+
+    LOG(DEBUG,"clock(%d) protocol_send_temperature_msg len(%d) protocol(%d).", util_clock(), len, config_service_get_app_protocol());
+    socket->send_time = util_clock();
+    
+    if(GM_SUCCESS != gm_socket_send(socket, buff, idx))
+    {
+        system_state_set_gpss_reboot_reason("gm_socket_send temperature");
+        gps_service_destroy_gprs();
+        return GM_NET_ERROR;
+    }
+    return GM_SUCCESS;
+}
+
+
+GM_ERRCODE protocol_send_signal_msg(SocketType *socket)
+{
+	u8 buff[100];
+	u16 len = sizeof(buff);
+	u16 idx = 0;
+
+	if(socket->status != SOCKET_STATUS_LOGIN && socket->status != SOCKET_STATUS_WORK)
+	{
+		LOG(WARN,"clock(%d) protocol_send_signal_msg socket->status(%s) error.", util_clock(), gm_socket_status_string((SocketStatus)socket->status));
+		return GM_PARAM_ERROR;
+	}
+
+	GM_memset(buff, 0x00, sizeof(buff));
+	switch(config_service_get_app_protocol())
+	{
+	case PROTOCOL_GOOME:
+		protocol_goome_pack_signal_msg(buff, &idx, len);
+		break;
+	case PROTOCOL_CONCOX:
+		break;
+	case PROTOCOL_JT808:
+		break;
+	default:
+		LOG(WARN,"clock(%d) protocol_send_signal_msg assert(app protocol(%d)) failed.", util_clock(), config_service_get_app_protocol());
+		return GM_PARAM_ERROR;
+	}
+
+	if (idx == 0)
+	{
+		return GM_PARAM_ERROR;
+	}
+	
+	len=idx;  // idx is msg len
+
+	LOG(DEBUG,"clock(%d) protocol_send_signal_msg len(%d) protocol(%d).", util_clock(), len, config_service_get_app_protocol());
+	socket->send_time = util_clock();
+	
+	if(GM_SUCCESS != gm_socket_send(socket, buff, idx))
+	{
+		system_state_set_gpss_reboot_reason("gm_socket_send testsignal");
+		gps_service_destroy_gprs();
+		return GM_NET_ERROR;
+	}
+	return GM_SUCCESS;
+}
+
+
+
+
+
 GM_ERRCODE protocol_send_heartbeat_msg(SocketType *socket)
 {
     u8 buff[20];
     u16 len = sizeof(buff);
     u16 idx = 0;
+    GM_ERRCODE ret;
 
     if(socket->status != SOCKET_STATUS_LOGIN && socket->status != SOCKET_STATUS_WORK)
     {
@@ -350,6 +495,9 @@ GM_ERRCODE protocol_send_heartbeat_msg(SocketType *socket)
     {
     case PROTOCOL_GOOME:
         protocol_goome_pack_heartbeat_msg(buff, &idx, len);  //17 bytes
+        break;
+    case PROTOCOL_CONCOX:
+        protocol_concox_pack_heartbeat_msg(buff, &idx, len);  // max 20 bytes
         break;
     case PROTOCOL_JT808:
         protocol_jt_pack_heartbeat_msg(buff, &idx, len);  // max 19 bytes
@@ -363,7 +511,8 @@ GM_ERRCODE protocol_send_heartbeat_msg(SocketType *socket)
 
     LOG(DEBUG,"clock(%d) protocol_send_heartbeat_msg len(%d) protocol(%d).", util_clock(), len, config_service_get_app_protocol());
     socket->send_time = util_clock();
-    if(GM_SUCCESS != gm_socket_send(socket, buff, idx))
+    ret = gm_socket_send(socket, buff, idx);
+    if(GM_SUCCESS != ret && GM_MEM_NOT_ENOUGH != ret)
     {
         system_state_set_gpss_reboot_reason("gm_socket_send heart");
         gps_service_destroy_gprs();
@@ -411,7 +560,6 @@ U32 protocol_send_gps_msg(SocketType *socket)
             break;
         }
     }
-    
     return send_counts;
 }
 
@@ -421,6 +569,7 @@ GM_ERRCODE protocol_send_logout_msg(SocketType *socket)
     u8 buff[20];
     u16 len = sizeof(buff);
     u16 idx = 0;
+    GM_ERRCODE ret;
 
 
     if(socket->status != SOCKET_STATUS_WORK)
@@ -448,7 +597,8 @@ GM_ERRCODE protocol_send_logout_msg(SocketType *socket)
     LOG(DEBUG,"clock(%d) protocol_send_logout_msg len(%d) protocol(%d).", util_clock(), len, config_service_get_app_protocol());
 
     socket->send_time = util_clock();
-    if(GM_SUCCESS != gm_socket_send(socket, buff, idx))
+    ret = gm_socket_send(socket, buff, idx);
+    if(GM_SUCCESS != ret && GM_MEM_NOT_ENOUGH != ret)
     {
         system_state_set_gpss_reboot_reason("gm_socket_send logout");
         gps_service_destroy_gprs();
@@ -464,6 +614,7 @@ GM_ERRCODE protocol_send_remote_ack(SocketType *socket, u8 *pRet, u16 retlen)
     u8 *buff;
     u16 len = 30 + retlen;  //jt808 need 22 bytes
     u16 idx = 0;
+    GM_ERRCODE ret;
 
     if(socket->status != SOCKET_STATUS_LOGIN && socket->status != SOCKET_STATUS_WORK)
     {
@@ -483,6 +634,9 @@ GM_ERRCODE protocol_send_remote_ack(SocketType *socket, u8 *pRet, u16 retlen)
     case PROTOCOL_GOOME:
         protocol_goome_pack_remote_ack(buff, &idx, len, pRet, retlen);  //12+retlen bytes
         break;
+    case PROTOCOL_CONCOX:
+        protocol_concox_pack_remote_ack(buff, &idx, len, pRet, retlen);  // max 18+retlen bytes
+        break;
     case PROTOCOL_JT808:
         protocol_jt_pack_remote_ack(buff, &idx, len, pRet, retlen);  //22|26 +retlen bytes
         break;
@@ -495,7 +649,8 @@ GM_ERRCODE protocol_send_remote_ack(SocketType *socket, u8 *pRet, u16 retlen)
     len=idx;  // idx is msg len
 
     socket->send_time = util_clock();
-    if(GM_SUCCESS != gm_socket_send(socket, buff, idx))
+    ret = gm_socket_send(socket, buff, idx);
+    if(GM_SUCCESS != ret && GM_MEM_NOT_ENOUGH != ret)
     {
         system_state_set_gpss_reboot_reason("gm_socket_send remote_ack");
         gps_service_destroy_gprs();
@@ -513,6 +668,7 @@ GM_ERRCODE protocol_send_general_ack(SocketType *socket)
     u8 buff[50];
     u16 len = sizeof(buff); 
     u16 idx = 0;
+    GM_ERRCODE ret;
 
     if(socket->status != SOCKET_STATUS_WORK)
     {
@@ -534,7 +690,8 @@ GM_ERRCODE protocol_send_general_ack(SocketType *socket)
     LOG(DEBUG,"clock(%d) protocol_send_general_ack len(%d) protocol(%d).", util_clock(), len, config_service_get_app_protocol());
 
     socket->send_time = util_clock();
-    if(GM_SUCCESS != gm_socket_send(socket, buff, idx))
+    ret = gm_socket_send(socket, buff, idx);
+    if(GM_SUCCESS != ret && GM_MEM_NOT_ENOUGH != ret)
     {
         system_state_set_gpss_reboot_reason("gm_socket_send geneal_ack");
         gps_service_destroy_gprs();
@@ -550,6 +707,7 @@ GM_ERRCODE protocol_send_param_get_ack(SocketType *socket)
     u8 *buff;
     u16 len = 1000; 
     u16 idx = 0;
+    GM_ERRCODE ret;
 
     if(socket->status != SOCKET_STATUS_WORK)
     {
@@ -580,7 +738,8 @@ GM_ERRCODE protocol_send_param_get_ack(SocketType *socket)
     LOG(DEBUG,"clock(%d) protocol_send_param_get_ack len(%d) protocol(%d).", util_clock(), len, config_service_get_app_protocol());
 
     socket->send_time = util_clock();
-    if(GM_SUCCESS != gm_socket_send(socket, buff, idx))
+    ret = gm_socket_send(socket, buff, idx);
+    if(GM_SUCCESS != ret && GM_MEM_NOT_ENOUGH != ret)
     {
         system_state_set_gpss_reboot_reason("gm_socket_send param_ack");
         gps_service_destroy_gprs();
