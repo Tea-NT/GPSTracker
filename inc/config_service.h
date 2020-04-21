@@ -377,6 +377,8 @@ typedef enum
 
     CFG_SIGNAL_INTERVAL,
 
+	CFG_PERIPHERAL_TYPE,
+
     CFG_PARAM_MAX
 }ConfigParamEnum;
 
@@ -489,6 +491,7 @@ typedef enum
     DEVICE_GS03D,//斯沃德定制型号，硬件同GS03A
     DEVICE_GS05C,//斯沃德定制型号，硬件同GS05B
     DEVICE_GS05D,//斯沃德定制型号，硬件同GS05A
+    DEVICE_C1,   //点烟充定位器，带录音
     
     DEVICE_MAX,
 }ConfigDeviceTypeEnum;

@@ -916,7 +916,7 @@ GM_ERRCODE gps_power_off(void)
 	uart_close_port(GM_UART_GPS);
 	led_set_gps_state(GM_LED_OFF);
 	
-	uart_close_port(GM_UART_DEBUG);
+	
 	hard_ware_close_gps();
 	hard_ware_sleep();
 	GM_SysMsdelay(1000);

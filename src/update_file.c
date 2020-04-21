@@ -245,18 +245,19 @@ GM_ERRCODE update_filemod_destroy(void)
 {
     if(s_file_extend.use_new_socket)
     {
-    	if(s_file_socket.id >=0)
+		if (hard_ware_is_at_command())
     	{
-    		if (hard_ware_is_at_command())
-	    	{
-	    		at_command_close_connect(s_file_socket.access_id);
-	    	}
-			else
+			if (util_clock() - s_file_socket.at_close_clock > 1)
 			{
-				GM_SocketClose(s_file_socket.id);
-				s_file_socket.id=-1;
+				at_command_close_connect(s_file_socket.access_id);
+				s_file_socket.at_close_clock = util_clock();
 			}
     	}
+		else if(s_file_socket.id >=0)
+		{
+			GM_SocketClose(s_file_socket.id);
+			s_file_socket.id=-1;
+		}
 		
         //必须重新create
         fifo_delete(&s_file_socket.fifo);
@@ -689,10 +690,11 @@ static void update_msg_parse(u8 *pdata, u16 len)
 static void update_msg_parse_response(u8 *pdata, u16 len)
 {
     u8 req_result = 0;
-    u16 idx;
-    u8 addr[22]; //xxx.xxx.xxx.xxx:xxxxx
-    u32 ip;
-    u16 port;
+    u16 idx = 0;
+    u8 addr[22] = {0}; //xxx.xxx.xxx.xxx:xxxxx
+    u32 ip = 0;
+    u16 port = 0;
+	JsonObject* p_log_root = NULL;
     
     req_result = (ProtocolUpdateResultEnum)pdata[13];
     switch(req_result)
@@ -760,12 +762,16 @@ static void update_msg_parse_response(u8 *pdata, u16 len)
             
             break;
     }
+	
+	p_log_root = json_create();
+	json_add_string(p_log_root, "event", "update");
+	json_add_int(p_log_root, "result", req_result);
     return;
 }
 
 static void update_msg_parse_file_data(u8 *pdata, u16 len)
 {
-    u16 current_idx = 0;  //从s_file_extend.block_current�? �?几个. [0-9]
+    u16 current_idx = 0;  //从s_file_extend.block_current. [0-9]
     u16 block_number;
     u32 check_bit = 0x01;
     GM_ERRCODE ret = GM_SUCCESS;

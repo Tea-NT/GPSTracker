@@ -653,6 +653,28 @@ void protocol_goome_pack_wifi_msg(U8* pdata, u16 *idx, u16 len)
     protocol_goome_pack_id_len(pdata, PROTOCCOL_GOOME_WIFI, *idx);
 }
 
+static void protocol_goome_pack_transprent(u8* pdata, u16 *idx, u16 len, char* trans_msg, u16 trans_len)
+{
+	if((*idx) + trans_len > len)
+    {
+        LOG(WARN,"clock(%d) protocol_goome_pack_transprent assert(len(%d)) failed.", util_clock(), len);
+        return;
+    }
+
+	GM_memcpy(&pdata[(*idx)], trans_msg, trans_len);
+	(*idx) = (*idx) + trans_len;
+}
+
+
+
+void protocol_goome_pack_transprent_msg(u8* pdata, u16 *idx, u16 len, char* trans_msg, u16 trans_len)
+{
+    protocol_goome_pack_head(pdata, idx, len);  //7 bytes
+    
+    protocol_goome_pack_transprent(pdata, idx, len, trans_msg, trans_len); //不定长
+
+    protocol_goome_pack_id_len(pdata, PROTOCCOL_GOOME_TRANSPARENT, *idx);
+}
 
 
 void protocol_goome_pack_login_msg(U8* pdata, u16 *idx, u16 len)

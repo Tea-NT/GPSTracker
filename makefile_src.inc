@@ -38,4 +38,6 @@ LIB_SRCS_C   = 	main.c  \
 		recorder.c \
 		call.c \
 		at_command.c\
+		peripheral.c\
+		
 		

@@ -730,7 +730,11 @@ static void gps_service_close(void)
 	{
 		if (hard_ware_is_at_command())
 		{
-			at_command_close_connect(s_gps_socket.access_id);
+			if (util_clock() - s_gps_socket.at_close_clock > 1)
+			{
+				at_command_close_connect(s_gps_socket.access_id);
+				s_gps_socket.at_close_clock = util_clock();
+			}
 		}
 		else 
 		{

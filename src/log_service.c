@@ -350,17 +350,18 @@ GM_ERRCODE log_service_destroy(void)
 
 static void log_service_close(void)
 {
-	if(s_log_socket.id >=0)
+	if (hard_ware_is_at_command())
 	{
-		if (hard_ware_is_at_command())
+		if (util_clock() - s_log_socket.at_close_clock > 1)
 		{
 			at_command_close_connect(s_log_socket.access_id);
+			s_log_socket.at_close_clock = util_clock();
 		}
-		else
-		{
-			GM_SocketClose(s_log_socket.id);
-			s_log_socket.id=-1;
-		}
+	}
+	else if(s_log_socket.id >=0)
+	{
+		GM_SocketClose(s_log_socket.id);
+		s_log_socket.id=-1;
 	}
 }
 
@@ -736,11 +737,6 @@ void log_service_upload(LogLevel level,JsonObject* p_root)
     ST_Time t = {0};
     char date[50] = {0};
 	char log_str[GM_LOG_MAX_LEN] = {0};
-
-	if (false == s_log_enable)
-	{
-		return;
-	}
 	
     zone = config_service_get_zone();
     util_get_current_local_time(NULL, &t, zone);

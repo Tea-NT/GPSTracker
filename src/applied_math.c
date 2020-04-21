@@ -219,6 +219,25 @@ double applied_math_get_distance(double start_lng, double start_lat, double end_
     double distance = 2 * asin(sqrt(a)) * EARTH_RADIUS * 1000;
     return distance;
 }
+
+U8 applied_math_8bit_checksum(const U8* p_data, U32 len)
+{
+	u8 checksum = 0;
+	u32 index = 0;
+
+	if(NULL == p_data)
+	{
+		return 0xFF;
+	}
+	
+	for(index = 0;index < len;index++)
+	{
+		checksum += p_data[index];
+	}
+	
+	return checksum;
+}
+
  
 U16 applied_math_calc_common_crc16(const U8 * p_data, U32 len)
 {

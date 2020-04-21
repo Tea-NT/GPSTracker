@@ -83,8 +83,8 @@ typedef enum
 //角度变化超过30度认为发生了突变
 #define MIN_ANGLE_RANGE 30
 	
-//学习时长20秒
-#define STUDY_TIME_SEC 20
+//学习时长5秒
+#define STUDY_TIME_SEC 5
 	
 //首次运行至少需要多少条数据
 #define MIN_STUDY_GRAVITY_TIMES (STUDY_TIME_SEC*G_SENSOR_SAMPLE_FREQ)

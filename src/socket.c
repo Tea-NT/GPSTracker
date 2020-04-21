@@ -168,6 +168,7 @@ GM_ERRCODE gm_socket_init(SocketType *socket, SocketIndexEnum access_id)
     socket->ip[0] = socket->ip[1] = socket->ip[2] = socket->ip[3] = 0;
     socket->port = 0;
     socket->access_id = access_id;
+	socket->at_close_clock = 0;
 
     if(access_id==SOCKET_INDEX_UPDATE)
     {

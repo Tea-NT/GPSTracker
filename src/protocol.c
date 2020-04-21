@@ -266,6 +266,57 @@ void protocol_msg_receive(SocketType *socket)
 }
 
 
+GM_ERRCODE protocol_send_transprent_msg(SocketType *socket, char *json_str)
+{
+    u8 *buff = NULL;
+    u16 len = GM_strlen(json_str) + 10;
+    u16 idx = 0;
+
+	if (socket->id < 0)
+	{
+		LOG(WARN, "clock(%d) protocol_send_transprent_msg socketid fail(%d) failed.", util_clock(), socket->id);
+		return GM_SYSTEM_ERROR;
+	}
+	
+	buff = GM_MemoryAlloc(len);
+	if (NULL == buff)
+	{
+		LOG(WARN, "clock(%d) protocol_send_transprent_msg GM_MemoryAlloc(%d) failed.", util_clock(), len);
+		return GM_SYSTEM_ERROR;
+	}
+	
+    GM_memset(buff, 0x00, len);
+
+    switch(config_service_get_app_protocol())
+    {
+    case PROTOCOL_GOOME:
+        protocol_goome_pack_transprent_msg(buff, &idx, len, json_str, GM_strlen(json_str));
+        break;
+
+    default:
+        LOG(WARN,"clock(%d) protocol_send_transprent_msg assert(app protocol(%d)) failed.", util_clock(), config_service_get_app_protocol());
+		GM_MemoryFree(buff);
+		buff = NULL;
+        return GM_PARAM_ERROR;
+    }
+    
+    len=idx;  // idx is msg len
+
+    socket->send_time = util_clock();
+    LOG(DEBUG,"clock(%d) protocol_send_transprent_msg len(%d) protocol(%d).", util_clock(), len, config_service_get_app_protocol());
+    if(GM_SUCCESS != gm_socket_send(socket, buff, idx))
+    {
+        system_state_set_gpss_reboot_reason("gm_socket_send transprent");
+        gps_service_destroy_gprs();
+		GM_MemoryFree(buff);
+		buff = NULL;
+        return GM_NET_ERROR;
+    }
+	
+	GM_MemoryFree(buff);
+	buff = NULL;
+    return GM_SUCCESS;
+}
 
 
 

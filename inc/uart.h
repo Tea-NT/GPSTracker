@@ -109,7 +109,10 @@ GM_ERRCODE uart_close_port(const UARTPort port);
 GM_ERRCODE uart_write(const UARTPort port, const U8* p_data, const U16 len);
 
 
-FifoType *get_uart_recv_fifo(const UARTPort port);
+FifoType* uart_get_recv_fifo(const UARTPort port);
+
+U32 uart_get_baud(const UARTPort port);
+
 
 
 #endif

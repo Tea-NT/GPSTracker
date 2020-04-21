@@ -31,6 +31,8 @@
 #include <gm_memory.h>
 #include <gm_gpio.h>
 #include <gm_callback.h>
+#include <gm_timer.h>
+
 #include "uart.h"
 #include "fifo.h"
 #include "log_service.h"
@@ -41,7 +43,7 @@
 #include "auto_test.h"
 #include "at_command.h"
 #include "uart.h"
-#include "gm_timer.h"
+#include "peripheral.h"
 
 //每次串口接收数据内存大小
 #define GM_UART_RCV_BUFF_LEN 1024
@@ -304,11 +306,15 @@ GM_ERRCODE uart_write(const UARTPort port, const U8* p_data, const U16 len)
 }
 
 
-FifoType *get_uart_recv_fifo(const UARTPort port)
+FifoType* uart_get_recv_fifo(const UARTPort port)
 {
 	return &g_uart.UARTParas[port].rcv_fifo;
 }
 
+U32 uart_get_baud(const UARTPort port)
+{
+	return g_uart.UARTParas[port].baud_rate;
+}
 
 static void debug_port_on_receive(void* msg)
 {
@@ -326,7 +332,7 @@ static void debug_port_on_receive(void* msg)
 	{
 		GM_memset(g_uart.UARTParas[GM_UART_DEBUG].rcv_buff, 0, GM_UART_RCV_BUFF_LEN);
 		len = GM_UartRead((Enum_SerialPort)GM_UART_DEBUG, (U8*)g_uart.UARTParas[GM_UART_DEBUG].rcv_buff, GM_UART_RCV_BUFF_LEN);
-		if (len > 0)
+		if (len > 0 && '#' == g_uart.UARTParas[GM_UART_DEBUG].rcv_buff[len-1])
 		{     
 			command_on_receive_data(COMMAND_UART,g_uart.UARTParas[GM_UART_DEBUG].rcv_buff,len,cmd_rsp,NULL);
 			//加结束符
@@ -335,7 +341,7 @@ static void debug_port_on_receive(void* msg)
 		}
 		else
 		{
-			break;
+			peripheral_uart_on_receive(g_uart.UARTParas[GM_UART_DEBUG].rcv_buff,len);
 		}
 	}while (len >= GM_UART_RCV_BUFF_LEN);
 		 

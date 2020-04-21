@@ -1453,7 +1453,7 @@ void at_command_recv(void)
 	u16 remove_len = 0;
 	static bool is_pop = true;
 	
-	s_at_command.rcv_fifo = get_uart_recv_fifo(GM_UART_AT);
+	s_at_command.rcv_fifo = uart_get_recv_fifo(GM_UART_AT);
 	if (!s_at_command.rcv_fifo)
 	{
 		return;

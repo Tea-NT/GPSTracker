@@ -159,7 +159,7 @@
 #define MKWORD(B1, B0)     ((((u16)B1)<<8) + ((u16)B0))
 #define MKDWORD(B3, B2, B1, B0)  ((((u32)B3)<<24) + (((u32)B2)<<16) + (((u32)B1)<<8) + ((u32)B0))
 #define BCD2HEX(n)              ((((n)>>4)*10) + ((n)&0x0f))  // 0x13 = 10+3
-#define HEX2BCD(n)              (((((n)/10)%10)<<4)  +  ((n)%10))
+#define HEX2BCD(n)              (((((n)/10)%10)<<4)   +  ((n)%10))
 #define BCD_HIGH(A)         (((A) >> 4 ) & 0x0f)
 #define BCD_LOW(A)           ((A) & 0x0f)
 #define IS_DNS_CHAR(c)  (((c)!=' ') && ((c)!='!') && ((c)!='$') && ((c)!='&') && ((c)!='?'))

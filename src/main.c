@@ -48,6 +48,7 @@
 #include "recorder.h"
 #include "call.h"
 #include "at_command.h"
+#include "peripheral.h"
 
 static void timer_self_test_start(void);
 static void upload_boot_log(void);
@@ -93,6 +94,7 @@ void app_main_entry(void)
 	system_state_create();
 	config_service_read_from_local();
     config_service_save_to_local();
+	peripheral_create();
     
 
 	config_service_set_test_mode(false);
@@ -168,6 +170,7 @@ void timer_1s_proc(void)
 		system_state_timer_proc();
 		relay_timer_proc();
 		auto_test_timer_proc();
+		peripheral_timer_proc();
 	}
 }
 
@@ -190,6 +193,7 @@ void kal_timer_1s_proc(void* p_arg)
 		system_state_timer_proc();
 		relay_timer_proc();
 		auto_test_timer_proc();
+		peripheral_timer_proc();
 		wifi_timer_proc();
 		#ifdef _SW_SUPPORT_RECORD_
 		recorder_timer_proc();

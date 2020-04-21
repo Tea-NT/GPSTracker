@@ -64,6 +64,7 @@ typedef struct
 
     //because gps data have no ack msg. it depends on ack_seq to confirm msg is received.
     u32 last_ack_seq;  //ack_seq before send
+    u32 at_close_clock; //4G要等待close应答
 }SocketType;
 
 

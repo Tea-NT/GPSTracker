@@ -50,6 +50,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include "circular_queue.h"
+#include "peripheral.h"
 
 //输入:电池是否充满
 #define GM_GPS_CHARGE_LEVLE_GPIO_PIN GM_GPIO4
@@ -2408,7 +2409,24 @@ GM_ERRCODE hard_ware_reboot(const BootReason reason,U16 delay_seconds)
  */
 GM_ERRCODE hard_ware_sleep(void)
 {
-	if (!hard_ware_is_at_command() && 0 == GM_SleepEnable())
+	GM_PERIPHERAL_TYPE peripheral_type;
+	config_service_get(CFG_PERIPHERAL_TYPE, TYPE_BYTE, &peripheral_type, sizeof(peripheral_type));
+
+	//如果是外接传感器，不关串口1，不休眠，不上报日志
+	if (PERIPHERAL_TYPE_NONE == peripheral_type)
+	{
+		return GM_SUCCESS;
+	}
+	
+	//如果通过AT指令连接模组，关串口1，不休眠，不上报日志
+	uart_close_port(GM_UART_DEBUG);
+	if(hard_ware_is_at_command())
+	{
+		return GM_SUCCESS;
+	}
+	
+	//否则，关串口1，休眠，上报日志
+	if (0 != GM_SleepEnable())
 	{
 		LOG(ERROR,"Failed to GM_SleepEnable.");
 		return GM_HARD_WARE_ERROR;
@@ -2422,6 +2440,7 @@ GM_ERRCODE hard_ware_sleep(void)
 		log_service_upload(INFO,p_log_root);
 		return GM_SUCCESS;
 	}
+	
 }
 
 GM_ERRCODE hard_ware_close_gps(void)

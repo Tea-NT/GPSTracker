@@ -337,18 +337,19 @@ GM_ERRCODE agps_service_destroy(void)
 
 static void agps_service_close(void)
 {
-	if(s_agps_socket.id >=0)
+	if (hard_ware_is_at_command())
 	{
-		if (hard_ware_is_at_command())
+		if (util_clock() - s_agps_socket.at_close_clock > 1)
 		{
 			at_command_close_connect(s_agps_socket.access_id);
+			s_agps_socket.at_close_clock = util_clock();
 		}
-		else 
-		{
-			GM_SocketClose(s_agps_socket.id);
-			s_agps_socket.id=-1;
-		}	
 	}
+	else if(s_agps_socket.id >= 0)
+	{
+		GM_SocketClose(s_agps_socket.id);
+		s_agps_socket.id=-1;
+	}	
 }
 
 GM_ERRCODE agps_service_timer_proc(void)

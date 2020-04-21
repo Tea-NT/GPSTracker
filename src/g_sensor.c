@@ -42,7 +42,9 @@
 #include "main.h"
 #include "hard_ware.h"
 #include "uart.h"
-	
+#include "update_service.h"
+#include "socket.h"
+
 //写控制bit
 #define I2C_WR 0
 
@@ -197,7 +199,7 @@ typedef struct
 
     Vector3D gravity;
     unsigned int cal_gravity_avg_len;
-    Vector3D static_gravity;
+    Vector3D sleep_gravity;
     Vector2D vehicle_head_vector;
 	
     //传感器加速度的滑动平均值,含重力加速度在内
@@ -331,9 +333,9 @@ static void reset_sensor_data(void)
     s_gsensor.cal_gravity_avg_len = 0;
     s_gsensor.cal_senor_aclr_avg_len = 0;
     s_gsensor.cal_senor_aclr_avg_len_short_period = 0;
-    s_gsensor.static_gravity.x = 0;
-    s_gsensor.static_gravity.y = 0;
-    s_gsensor.static_gravity.z = 0;
+    s_gsensor.sleep_gravity.x = 0;
+    s_gsensor.sleep_gravity.y = 0;
+    s_gsensor.sleep_gravity.z = 0;
     s_gsensor.vehicle_head_vector.x = 0;
     s_gsensor.vehicle_head_vector.y = 0;
     s_gsensor.study_aclr_count = 0;
@@ -522,9 +524,17 @@ GM_ERRCODE enter_sleep_mode(void)
 		{
 			if (hard_ware_is_device_w())
 			{
+				char flight_mode = true;
+				bool gps_close = false;
+				config_service_get(CFG_GPS_CLOSE, TYPE_BOOL, &gps_close, sizeof(gps_close));
+				if(gps_close && SOCKET_STATUS_DATA_FINISH == update_service_get_status() || SOCKET_STATUS_ERROR == update_service_get_status())
+				{
+					GM_GetSetFlightMode(true, &flight_mode);
+				}
 				GPMFUN(sleep)();
 			}
 			system_state_set_work_state(GM_SYSTEM_STATE_SLEEP);
+			s_gsensor.sleep_gravity = s_gsensor.gravity;
 			led_set_gsm_state(GM_LED_OFF);
 			gps_service_heart_atonce();
 		}
@@ -544,6 +554,13 @@ GM_ERRCODE exit_sleep_mode(void)
 			led_set_gsm_state(GM_LED_FLASH);
 			if (hard_ware_is_device_w())
 			{
+				char flight_mode = false;
+				bool gps_close = false;
+				config_service_get(CFG_GPS_CLOSE, TYPE_BOOL, &gps_close, sizeof(gps_close));
+				if(gps_close)
+				{
+					GM_GetSetFlightMode(true, &flight_mode);
+				}
             	GPMFUN(wakeup)();
 			}
 			if (!hard_ware_is_at_command())
@@ -995,11 +1012,8 @@ void check_vehicle_state(Aclr a)
 {
     //实时加速度（含重力）
     Vector3D sensor_aclr = {0, 0, 0};
-    //水平方向加速度（不含重力）
-    Vector3D vehicle_horizontal_aclr = {0, 0, 0};
-    //垂直方向加速度（不含重力）
-    Vector3D vehicle_vertical_aclr = {0, 0, 0};
-    float vehicle_horizontal_aclr_magnitude = 0;
+  
+   
 	bool aclr_alarm_enable = false;
 	
     
@@ -1028,19 +1042,38 @@ void check_vehicle_state(Aclr a)
     //学习完毕
     else
     {
+    	static float last_log_aclr_time = 0;
+		
+		 //水平方向加速度（不含重力）
+	    Vector3D vehicle_horizontal_aclr = {0, 0, 0};
+		 
+	    //垂直方向加速度（不含重力）
+	    Vector3D vehicle_vertical_aclr = {0, 0, 0};
+     	float vehicle_horizontal_aclr_mag_by_gravity = 0;
+    	float vehicle_horizontal_aclr_mag_by_sleep_gravity = 0;
     	get_vehicle_acceleration(s_gsensor.gravity, s_gsensor.senor_aclr_moving_avg, &vehicle_horizontal_aclr, &vehicle_vertical_aclr);
-   
+		vehicle_horizontal_aclr_mag_by_gravity = applied_math_get_magnitude_3d(vehicle_horizontal_aclr) * G_SENSOR_RANGE / G_SENSOR_MAX_VALUE;
+
+		get_vehicle_acceleration(s_gsensor.sleep_gravity, s_gsensor.senor_aclr_moving_avg, &vehicle_horizontal_aclr, &vehicle_vertical_aclr);
+		vehicle_horizontal_aclr_mag_by_sleep_gravity =  applied_math_get_magnitude_3d(vehicle_horizontal_aclr) * G_SENSOR_RANGE / G_SENSOR_MAX_VALUE;
+
+		if((util_clock() - last_log_aclr_time) > 0)
+		{
+			last_log_aclr_time = util_clock();
+			LOG(DEBUG,"sleep gravity(%f,%f,%f)",s_gsensor.sleep_gravity.x,s_gsensor.sleep_gravity.y,s_gsensor.sleep_gravity.z);
+			LOG(DEBUG,"aclr by sleep gravity=%f,aclr=%f",vehicle_horizontal_aclr_mag_by_sleep_gravity,vehicle_horizontal_aclr_mag_by_gravity);
+		}
+
         //检测是否由静止转为运动
-        vehicle_horizontal_aclr_magnitude = applied_math_get_magnitude_3d(vehicle_horizontal_aclr) * G_SENSOR_RANGE / G_SENSOR_MAX_VALUE;
-        check_static_or_run(vehicle_horizontal_aclr_magnitude);
+        check_static_or_run(MIN(vehicle_horizontal_aclr_mag_by_sleep_gravity,vehicle_horizontal_aclr_mag_by_gravity));
 
 		if (aclr_alarm_enable)
 		{
-			check_rapid_acceleration(vehicle_horizontal_aclr_magnitude);
+			check_rapid_acceleration(MAX(vehicle_horizontal_aclr_mag_by_sleep_gravity,vehicle_horizontal_aclr_mag_by_gravity));
 
-	        check_emergency_brake(vehicle_horizontal_aclr_magnitude);
+	        check_emergency_brake(MAX(vehicle_horizontal_aclr_mag_by_sleep_gravity,vehicle_horizontal_aclr_mag_by_gravity));
 
-	        check_sudden_turn_acceleration(vehicle_horizontal_aclr_magnitude);
+	        check_sudden_turn_acceleration(MAX(vehicle_horizontal_aclr_mag_by_sleep_gravity,vehicle_horizontal_aclr_mag_by_gravity));
 		}     
     }
 	
@@ -1386,10 +1419,6 @@ static void study_gravity(Aclr a)
     {
         //长距离滑动平均得到重力和固定误差
         calculate_moving_avg(sensor_aclr, G_SENSOR_BUF_LEN - 1, &(s_gsensor.gravity), &(s_gsensor.cal_gravity_avg_len));
-        if (VEHICLE_STATE_STATIC == system_state_get_vehicle_state())
-        {
-            s_gsensor.static_gravity = s_gsensor.gravity;
-        }
     }
     s_gsensor.study_aclr_count++;
 }
@@ -1547,7 +1576,7 @@ static void check_static_or_run(float vehicle_horizontal_aclr_magnitude)
 			system_state_set_vehicle_state(VEHICLE_STATE_RUN);
 			system_state_set_has_reported_gps_after_run(false);
 		}
-		LOG(DEBUG,"RUN:aclr=%f,thr=%f",vehicle_horizontal_aclr_magnitude,s_gsensor.threshold.run_thr);
+		
   	}
     //2、运动转为静止
     else if (vehicle_horizontal_aclr_magnitude <= s_gsensor.threshold.static_thr)

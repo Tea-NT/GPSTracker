@@ -29,6 +29,7 @@
 */
 void protocol_msg_receive(SocketType *socket);
 
+GM_ERRCODE protocol_send_transprent_msg(SocketType *socket, char *json_str);
 GM_ERRCODE protocol_send_login_msg(SocketType *socket);
 GM_ERRCODE protocol_send_device_msg(SocketType *socket);
 

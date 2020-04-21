@@ -53,6 +53,9 @@
 
 #define SECONDS_PER_YEAR (SECONDS_PER_HOUR*HOURS_PER_DAY*DAYS_PER_YEAR)
 
+#define MIN(a,b) (a) < (b) ? (a) : (b)
+#define MAX(a,b) (a) > (b) ? (a) : (b)
+
 
 //二维向量类型及指针类型
 typedef struct
@@ -188,6 +191,16 @@ U16 applied_math_get_angle_diff(U16 angle_degree1, U16 angle_degree2);
  * Others:	   
  */
 double applied_math_get_distance(double start_lng, double start_lat, double end_lng, double end_lat);
+
+/**
+ * Function:   计算checksum
+ * Description:计算一段数据的8位checksum
+ * Input:	   p_data——数据起始地址；len——数据长度
+ * Output:	   无
+ * Return:	   CRC校验值
+ * Others:	   
+ */
+U8 applied_math_8bit_checksum(const U8* p_data, U32 len);
 
 /**
  * Function:   计算普通CRC校验值

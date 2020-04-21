@@ -79,7 +79,7 @@ int GM_GetRecoderDB(const u16  * FileName)
 			config_service_get(CFG_VOICE_ENERGY, TYPE_BYTE, &sound_energy, sizeof(sound_energy));
 			if (config_service_is_test_mode())
 			{
-				sound_energy = 60;
+				sound_energy = 20;
 			}
 			if((cur_db >= sound_energy)&&(cur_db <= 100))
 			{

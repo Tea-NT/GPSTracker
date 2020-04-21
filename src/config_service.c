@@ -110,6 +110,8 @@ static const ConfigParamStruct s_config_param[] =
 	{"LIMITNUM",                        CFG_LIMIT_RELAY_NUMBER},
 	{"NWSCAN",							CFG_4G_NWSCAN},
 	{"SIGNAL",							CFG_SIGNAL_INTERVAL},
+	{"GPSCLOSE",                        CFG_GPS_CLOSE},
+	{"PERIPHERAL",                      CFG_PERIPHERAL_TYPE},
 };
 
 typedef struct
@@ -309,6 +311,7 @@ static GM_ERRCODE config_service_transfer_status(u8 new_status)
             switch(new_status)
             {
                 case SOCKET_STATUS_INIT:
+					ret = GM_SUCCESS;
                     break;
                 case SOCKET_STATUS_GET_HOST:
                     break;
@@ -858,18 +861,19 @@ GM_ERRCODE config_service_destroy(void)
 
 static void config_service_close(void)
 {
-	if(s_config_socket.id >=0)
+	if (hard_ware_is_at_command())
 	{
-		if (hard_ware_is_at_command())
+		if (util_clock() - s_config_socket.at_close_clock > 1)
 		{
 			at_command_close_connect(s_config_socket.access_id);
+			s_config_socket.at_close_clock = util_clock();
 		}
-		else 
-		{
-			GM_SocketClose(s_config_socket.id);
-			s_config_socket.id=-1;
-		}
-	} 
+	}
+	else if(s_config_socket.id >=0)
+	{
+		GM_SocketClose(s_config_socket.id);
+		s_config_socket.id=-1;
+	}
 }
 
 GM_ERRCODE config_service_timer_proc(void)
@@ -1196,6 +1200,17 @@ static void config_service_set_addr(u16 index, u8 *pMsg, u8 len)
         LOG(INFO,"clock(%d) config_service_set_addr(%s) success.", util_clock(), pMsg);
         config_service_set((ConfigParamEnum)index, TYPE_STRING, pMsg, len);
     }
+}
+
+static void config_service_set_bool(u16 index, u8 *pMsg, u8 len)
+{
+	if (NULL == pMsg || len < sizeof(U32))
+	{
+		LOG(INFO,"clock(%d) config_service_set_range_word index(%d) len %d failed.", util_clock(),index,len);
+		return;
+	}
+    config_service_set((ConfigParamEnum)index, TYPE_BOOL, pMsg, sizeof(U8));
+    LOG(INFO,"clock(%d) config_service_set_byte index(%d) value %d.", util_clock(),index,pMsg[0]);
 }
 
 static void config_service_set_byte(u16 index, u8 *pMsg, u8 len)
@@ -1579,6 +1594,14 @@ static void config_msg_param_set(u16 index, u8 *pMsg, u8 len)
         case CFG_SIGNAL_INTERVAL:
         	config_service_set_range_word((ConfigParamEnum)index, pMsg, sizeof(U32),CONFIG_UPLOAD_TIME_MIN,CONFIG_UPLOAD_TIME_MAX);
             break;
+
+		case CFG_GPS_CLOSE:
+			config_service_set_bool(index, pMsg, sizeof(U32));
+			break;
+		
+		case CFG_PERIPHERAL_TYPE:
+			config_service_set_byte(index, &pMsg[3], sizeof(U32));
+			break;
 
         default:
             break;

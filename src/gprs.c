@@ -722,9 +722,11 @@ bool gprs_check_need_reboot(u32 check_time)
 {
     //保命手段 , 网络一直不好, 重启
     U16 value_u16 = 0xFFFF;
+	bool gps_close = false;
+	config_service_get(CFG_GPS_CLOSE, TYPE_BOOL, &gps_close, sizeof(gps_close));
     config_service_get(CFG_HEART_INTERVAL, TYPE_SHORT, &value_u16, sizeof(value_u16));
 	//7次心跳失败重启，考虑时间误差再加5秒
-    if((util_clock() - check_time) > (GPRS_REBOOT_HEART_FAILEDTIMES*value_u16 + 5))
+    if((util_clock() - check_time) > (GPRS_REBOOT_HEART_FAILEDTIMES*value_u16 + 5) && false == gps_close)
     {
         hard_ware_reboot(GM_REBOOT_GPRS,1);
         return true;

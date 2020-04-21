@@ -42,6 +42,7 @@ typedef enum
 
 
 /*idx 是输入输出参数*/
+void protocol_goome_pack_transprent_msg(u8* pdata, u16 *idx, u16 len, char* trans_msg, u16 trans_len);
 void protocol_goome_pack_login_msg(u8 *pdata, u16 *idx, u16 len);
 void protocol_goome_pack_iccid_msg(u8 *pdata, u16 *idx, u16 len);
 void protocol_goome_pack_temperature_msg(U8* pdata, u16 *idx, u16 len);

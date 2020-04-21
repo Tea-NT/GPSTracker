@@ -206,7 +206,7 @@ typedef struct
     u8  reserved_u8_6[40];
     
     u8  work_mode;          // 工作模式：0——GPS定位；1——WiFi定位；2——LBS定位
-    u8  reserved_u8_8;
+    u8  peripheral_type;    // 外设型号：0——无外设；1——重优油杆传感器
     u8  reserved_u8_9;
     u8  reserved_u8_10;
     u16 power_alarm_check_tim;  //断电报警检测时间
@@ -1033,6 +1033,9 @@ static void config_service_set_factory_deault(void)
     value_u16 = 5;
     config_service_set(CFG_POWER_CHECK_TIME, TYPE_SHORT, &value_u16, sizeof(value_u16));
 
+	value_u8 = 0;
+	config_service_set(CFG_PERIPHERAL_TYPE, TYPE_BYTE, &value_u8, sizeof(value_u8));
+	
 	value_u8 = 0;
 	config_service_set(CFG_CUTOFFALM_DISABLE, TYPE_BYTE, &value_u8, sizeof(value_u8));
     
@@ -1900,7 +1903,9 @@ static void convert_cfg_to_para(GprsParaFileType *para)
 	config_service_get(CFG_WORKMODE, TYPE_BYTE, &value_u8, sizeof(value_u8));
     para->work_mode = value_u8;
 
-    para->reserved_u8_8     = 12;
+	config_service_get(CFG_PERIPHERAL_TYPE, TYPE_BYTE, &value_u8, sizeof(value_u8));
+    para->peripheral_type = value_u8;
+	
 
     // 低电阀值
     para->reserved_u8_9 = 10;
@@ -2296,6 +2301,10 @@ static void convert_para_to_cfg(const GprsParaFileType *para)
 	
     value_u8 = para->work_mode;
     config_service_set(CFG_WORKMODE, TYPE_BYTE, &value_u8, sizeof(value_u8));
+
+	value_u8 = para->peripheral_type;
+	config_service_set(CFG_PERIPHERAL_TYPE, TYPE_BYTE, &value_u8, sizeof(value_u8));
+    
 
     value_u16 = para->power_alarm_check_tim;
     config_service_set(CFG_POWER_CHECK_TIME, TYPE_SHORT, &value_u16, sizeof(value_u16));

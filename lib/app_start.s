@@ -219,15 +219,15 @@ $appfun     LDR     pc, =$libfun
 	Subfun GM_MemoryRealloc
 	Subfun GM_GetTime
 	Subfun GM_GetChipRID
-	Subfun GM_Func19
-	Subfun GM_Func20
-	Subfun GM_Func21
-	Subfun GM_Func22
-	Subfun GM_Func23
-	Subfun GM_Func24
-	Subfun GM_Func25
-	Subfun GM_Func26
-	Subfun GM_Func27
+	Subfun GM_GetHostByName2
+	Subfun GM_WifiMacAddrReadWrite
+	Subfun GM_SetFakeCellFeature
+	Subfun GM_FlightModeCallBackResgister
+	Subfun GM_ReadWriteCfunState
+	Subfun GM_PwmInit
+	Subfun GM_PwmOutput
+	Subfun GM_PwmUninit
+	Subfun GM_GetRecoderDB
 	Subfun GM_Func28
 	Subfun GM_Func29
 	Subfun GM_Func30

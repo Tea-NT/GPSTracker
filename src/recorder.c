@@ -588,7 +588,6 @@ static bool record_file_db_value_check(void)
 			result = false;
 		}
 	}
-
 	return result;
 }
 
