@@ -620,7 +620,6 @@ GM_ERRCODE gm_socket_send(SocketType *socket, u8 *data, u16 len)
     {
         return GM_PARAM_ERROR;
     }
-    
     //发一部分的没有出现过,发送失败会返回负数
     if (hard_ware_is_at_command())
 	{

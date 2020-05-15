@@ -32,8 +32,8 @@
 #include "error_code.h"
 
 
-//10秒钟内监测到3次以上震动唤醒
-#define SHAKE_COUNT_TO_AWAKE 3
+//10秒钟内监测到2次以上震动唤醒
+#define SHAKE_COUNT_TO_AWAKE 2
 #define SHAKE_TIME_SECONDS 10
 
 

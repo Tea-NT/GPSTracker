@@ -18,7 +18,7 @@
 #include "agps_service.h"
 
 #define JT_DATA_DEPART_FLAG      0x2000   //分包标志    0010 0000 0000 0000
-#define JT_DATA_SEC_FLAG      0x1C00   //加密标志    0001 1100 0000 0000
+#define JT_DATA_SEC_FLAG      0x1C00      //加密标志    0001 1100 0000 0000
 
 typedef enum 
 {
@@ -34,8 +34,8 @@ typedef enum
     JT_CMD_PLAT_ACK = 0x8001,   //平台通用应答
     JT_CMD_REGISTER = 0x0100,   //终端注册
     JT_CMD_REGISTER_ACK = 0x8100,   //终端注册应答
-    JT_CMD_ICCID = 0x0120,   //终端上报iccid
-    JT_CMD_AUTH = 0x0102,   //终端鉴权
+    JT_CMD_ICCID = 0x0120,       //终端上报iccid
+    JT_CMD_AUTH = 0x0102,        //终端鉴权
     JT_CMD_SET_PARAM = 0x8103,   //设置终端参数
     JT_CMD_GET_PARAM = 0x8104,   //查询终端参数
     JT_CMD_TERM_CTL = 0x8105,   //终端控制
@@ -46,7 +46,7 @@ typedef enum
     JT_CMD_LOCATE_MULTI = 0x704,   //定位数据批量上传
     JT_CMD_TEXT_RESULT = 0x6006,  // 终端文本数据上报
     JT_CMD_CONFIRM_ALARM = 0x8203,   //确认紧急报警
-    JT_CMD_TEXT = 0x8300    //文本信息下发 
+    JT_CMD_TEXT = 0x8300        //文本信息下发 
 }Jt08CmdType;
 
 typedef enum
@@ -96,7 +96,7 @@ static void protocol_jt_pack_auth_code(u8 *pdata, u16 *idx, u16 len, u16 *return
 static void protocol_jt_pack_iccid(u8 *pdata, u16 *idx, u16 len, u16 *return_len);
 static void protocol_jt_pack_gps_info(GpsDataModeEnum mode, const GPSData *gps, u8 *pdata, u16 *idx, u16 len, u16 *return_len);
 static void protocol_jt_parse_general_msg(U8* pdata, u16 len);
-static void protocol_jt_pack_additional_mileage(u8 *pdata, u16 *idx, u16 len, u16 *return_len);
+static void protocol_jt_pack_additional_info(u8 *pdata, u16 *idx, u16 len, u16 *return_len);
 static void protocol_jt_pack_device_status(u8 *pdata, u16 *idx, u16 len, u16 *return_len,GPSData* p_data);
 static void protocol_jt_pack_alarm_status(u8 *pdata, u16 *idx, u16 len, u16 *return_len);
 static void protocol_jt_pack_additional_lbs(u8 *pdata, u16 *idx, u16 len, u16 *return_len);
@@ -271,7 +271,7 @@ static void protocol_jt_pack_head(u8 *pdata, u16 *idx, u16 len, u16 total, u16 p
     }
 	else //取imei号后10位, 前面加"1"(0x31)
 	{
-		pdata[(*idx)++] = MERGEBCD(0, 0x31);
+		pdata[(*idx)++] = MERGEBCD(0, '1');
 	    pdata[(*idx)++] = MERGEBCD(util_chr(imei[5]), util_chr(imei[6]));
 	    pdata[(*idx)++] = MERGEBCD(util_chr(imei[7]), util_chr(imei[8]));
 	    pdata[(*idx)++] = MERGEBCD(util_chr(imei[9]), util_chr(imei[10]));
@@ -345,7 +345,7 @@ static void protocol_jt_pack_register_info(u8 *pdata, u16 *idx, u16 len, u16 *re
     u8 at_type;
     u8 copy_len;
     u16 orginal_idx = *idx;
-    u8 value_string[20]; 
+    u8 value_string[30]; 
 	u8 app_ver;
 
     config_service_get(CFG_JT_AT_TYPE, TYPE_BYTE, &at_type, sizeof(at_type));
@@ -399,7 +399,7 @@ static void protocol_jt_pack_register_info(u8 *pdata, u16 *idx, u16 len, u16 *re
     pdata[(*idx)++] = value_u8;
     
     
-    //车牌号码=nbyte     //default 8bytes
+    //车牌号码=nbyte     //default 12bytes
     config_service_get(CFG_JT_VEHICLE_NUMBER, TYPE_STRING, value_string, sizeof(value_string));
     copy_len = util_remove_char(value_string, GM_strlen((const char *)value_string),' ');
     GM_memcpy(&pdata[(*idx)], value_string, copy_len);
@@ -433,7 +433,7 @@ void protocol_jt_pack_regist_msg(u8 *pdata, u16 *idx, u16 len)
 
     *idx = len;
     protocol_jt_pack_escape(send, send_len, pdata, idx);  
-
+	
     GM_MemoryFree(send);
 }
 
@@ -462,6 +462,7 @@ static void protocol_jt_pack_auth_code(u8 *pdata, u16 *idx, u16 len, u16 *return
     
     GM_memcpy(&pdata[*idx], &auth_code[1], content_len);
     (*idx) += content_len;
+
     *return_len = content_len;
 }
 
@@ -632,6 +633,7 @@ static void protocol_jt_pack_gps_info(GpsDataModeEnum mode, const GPSData *gps, 
     gps_speed = ((u16)gps->speed > 180) ? 180 : ((u16)gps->speed);
     gps_angle = ((u16)gps->course > 360) ? 0 : ((u16)gps->course);
     gps_time = gps->gps_time;
+	
     zone = config_service_get_zone();
     util_utc_sec_to_bcdtime_base2000(gps_time, bcd_tim, zone);
 
@@ -667,20 +669,29 @@ static void protocol_jt_pack_gps_info(GpsDataModeEnum mode, const GPSData *gps, 
 }
 
 
-static void protocol_jt_pack_additional_mileage(u8 *pdata, u16 *idx, u16 len, u16 *return_len)
+static void protocol_jt_pack_additional_info(u8 *pdata, u16 *idx, u16 len, u16 *return_len)
 {
+
     u32 dwtmp;
-    
+	u8  electric = 0;
+	
+	//里程
     pdata[(*idx)++] = 0x01;
     pdata[(*idx)++] = 0x04;   
     dwtmp = system_state_get_mileage() / 100;
-    
+
     pdata[(*idx)++] = BHIGH_BYTE(WHIGH_WORD(dwtmp));
     pdata[(*idx)++] = BLOW_BYTE(WHIGH_WORD(dwtmp));
     pdata[(*idx)++] = BHIGH_BYTE(WLOW_WORD(dwtmp));
     pdata[(*idx)++] = BLOW_BYTE(WLOW_WORD(dwtmp));
-        
-    *return_len = 6;
+
+	//电量
+	pdata[(*idx)++] = 0x04;
+	pdata[(*idx)++] = 0x01;
+	electric = hard_ware_get_internal_battery_percent();
+	pdata[(*idx)++] = electric;
+
+    *return_len = 9;
 }
 
 
@@ -774,6 +785,12 @@ static void protocol_jt_pack_device_status(u8 *pdata, u16 *idx, u16 len, u16 *re
         SET_BIT3(device_status);  //西经
     }
 
+    // 高度负数为地下
+	if (p_data->alt < 0.0f)
+	{
+		SET_BIT4(device_status);  //地下
+	}
+	
     if (system_state_get_device_relay_state())
     {
         SET_BIT10(device_status);
@@ -805,7 +822,6 @@ static void protocol_jt_pack_alarm_status(u8 *pdata, u16 *idx, u16 len, u16 *ret
     {
         SET_BIT0(alarm_state);
     }
-
     if(sys_state & SYSBIT_ALARM_SPEED)
     {
         SET_BIT1(alarm_state);
@@ -881,6 +897,7 @@ void protocol_jt_pack_gps_msg(GpsDataModeEnum mode, const GPSData *gps, u8 *pdat
         tmp_gps.gps_time = util_get_utc_time();
         tmp_gps.lat = agps_service_get_unfix_lat();
         tmp_gps.lng = agps_service_get_unfix_lng();
+		tmp_gps.alt = 0;
     }
 
     protocol_jt_pack_head(send, &send_len, len, 1, 0);  // 13bytes | 17bytes
@@ -890,7 +907,7 @@ void protocol_jt_pack_gps_msg(GpsDataModeEnum mode, const GPSData *gps, u8 *pdat
     content_all += content_len;
     protocol_jt_pack_gps_info(mode, &tmp_gps, send, &send_len, len, &content_len);  //20 bytes
     content_all += content_len;
-    protocol_jt_pack_additional_mileage(send, &send_len, len, &content_len);  //6 bytes
+    protocol_jt_pack_additional_info(send, &send_len, len, &content_len);  //9 bytes
     content_all += content_len;
 
 	config_service_get(CFG_PROTOCOL_VER, TYPE_BYTE, &app_ver, sizeof(app_ver));
@@ -1018,7 +1035,7 @@ void protocol_jt_pack_lbs_msg(u8 *pdata, u16 *idx, u16 len)
     content_all += content_len;
     protocol_jt_pack_gps_info(GPS_MODE_FIX_TIME, &gps, send, &send_len, len, &content_len);  //20 bytes
     content_all += content_len;
-    protocol_jt_pack_additional_mileage(send, &send_len, len, &content_len);  //6 bytes
+    protocol_jt_pack_additional_info(send, &send_len, len, &content_len);  //9 bytes
     content_all += content_len;
 	config_service_get(CFG_PROTOCOL_VER, TYPE_BYTE, &app_ver, sizeof(app_ver));
 	//四川移动 固定增加鉴权码及IMSI
@@ -1067,7 +1084,7 @@ void protocol_jt_parse_msg(u8 *pdata, u16 len)
     u8 check_sum=0;
     u16 cmd;
 
-    //log_service_print_hex((const char *)pdata,len);
+    log_service_print_hex((const char *)pdata,len);
     if(GM_SUCCESS != protocol_jt_pack_unescape(pdata, &len))
     {
         return;
@@ -1091,39 +1108,48 @@ void protocol_jt_parse_msg(u8 *pdata, u16 len)
         case JT_CMD_PLAT_ACK:
             LOG(DEBUG,"clock(%d) protocol_jt_parse_msg(JT_CMD_PLAT_ACK).", util_clock());
             protocol_jt_parse_plat_ack(pdata,len);
+			
             break;
         case JT_CMD_REGISTER_ACK:
             LOG(DEBUG,"clock(%d) protocol_jt_parse_msg(JT_CMD_REGISTER_ACK).", util_clock());
             protocol_jt_parse_register_ack(pdata,len);
+			
             break;
         case JT_CMD_SET_PARAM:
             LOG(DEBUG,"clock(%d) protocol_jt_parse_msg(JT_CMD_SET_PARAM).", util_clock());
             protocol_jt_parse_set_param(pdata,len);
+			
             break;
         case JT_CMD_GET_PARAM:
             LOG(DEBUG,"clock(%d) protocol_jt_parse_msg(JT_CMD_GET_PARAM).", util_clock());
             protocol_jt_parse_get_param(pdata,len);
+			
             break;
         case JT_CMD_TERM_CTL:
             LOG(DEBUG,"clock(%d) protocol_jt_parse_msg(JT_CMD_TERM_CTL).", util_clock());
             protocol_jt_parse_terminal_control(pdata,len);
+			
             break;
         case JT_CMD_LOCATE_REQ:
             LOG(DEBUG,"clock(%d) protocol_jt_parse_msg(JT_CMD_LOCATE_REQ).", util_clock());
             protocol_jt_parse_gps_req(pdata,len);
+			
             break;
         case JT_CMD_CONFIRM_ALARM:
             LOG(DEBUG,"clock(%d) protocol_jt_parse_msg(JT_CMD_CONFIRM_ALARM).", util_clock());
             protocol_jt_parse_general_msg(pdata,len);
+			
             break;
         case JT_CMD_TEXT:
             LOG(DEBUG,"clock(%d) protocol_jt_parse_msg(JT_CMD_TEXT).", util_clock());
             protocol_jt_parse_text(pdata,len);
+			
             break;
         default:
             LOG(DEBUG,"clock(%d) protocol_jt_parse_msg(%04x).", util_clock(),cmd);
             log_service_print_hex((const char *)pdata,len);
             protocol_jt_parse_general_msg(pdata,len);
+			
             break;
     }
 }
@@ -1240,6 +1266,7 @@ static void protocol_jt_parse_general_msg(U8* pdata, u16 len)
     s_jt_msg_save.msg_id = ((u16)pdata[1]<<8)+pdata[2];
     s_jt_msg_save.server_serial = ((u16)pdata[11]<<8)+pdata[12];
     s_jt_msg_save.msg_result = 0;  //成功
+
     
     //发送ack   
     gps_service_after_server_req();

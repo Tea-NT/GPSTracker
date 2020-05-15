@@ -446,6 +446,9 @@ GM_ERRCODE hard_ware_ec20_power_key(bool is_on);
 GM_ERRCODE hard_ware_ec20_reset(bool is_on);
 
 
+
+
+
 #endif
 
 

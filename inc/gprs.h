@@ -82,6 +82,11 @@ u32 gprs_get_call_ok_count(void);
 
 void gprs_socket_notify_by_at_command(void* msg_ptr);
 
+void gprs_open_flight_mode(void);
+
+void gprs_close_flight_mode(void);
+
+
 
 #endif
 

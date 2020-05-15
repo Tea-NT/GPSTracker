@@ -249,6 +249,7 @@ void protocol_msg_receive(SocketType *socket)
     {
     case PROTOCOL_GOOME:  // PROTOCOL_HEADER_GOOME
         protocol_goome_parse_msg(pdata,  msg_len);
+		LOG_HEX((char *)pdata,msg_len);
         break;
     case PROTOCOL_CONCOX:
         log_service_print_hex((const char *)pdata, msg_len);
@@ -256,6 +257,7 @@ void protocol_msg_receive(SocketType *socket)
         break;
     case PROTOCOL_JT808:
         protocol_jt_parse_msg(pdata,  msg_len);
+		LOG_HEX((char *)pdata,msg_len);
         break;
     default:
         LOG(WARN,"clock(%d) protocol_msg_receive assert(app protocol(%d)) failed.", util_clock(), config_service_get_app_protocol());
@@ -335,6 +337,7 @@ GM_ERRCODE protocol_send_login_msg(SocketType *socket)
     {
     case PROTOCOL_GOOME:
         protocol_goome_pack_login_msg(buff, &idx, len);  //16 bytes
+        LOG_HEX((char *)buff,len);
         break;
     case PROTOCOL_CONCOX:
         protocol_concox_pack_login_msg(buff, &idx, len);  // PROTOCOL_VER_GT02 22bytes.    other 18bytes
@@ -344,11 +347,13 @@ GM_ERRCODE protocol_send_login_msg(SocketType *socket)
         if(value_u8)
         {
             protocol_jt_pack_auth_msg(buff, &idx, len); // max 115 bytes
+            LOG_HEX((char*)buff,len);
             LOG(DEBUG,"clock(%d) protocol_send_login_msg PROTOCOL_JT808 auth msg len(%d)).", util_clock(), idx);
         }
         else
         {
             protocol_jt_pack_regist_msg(buff, &idx, len);   // max 76 byes
+            LOG_HEX((char*)buff,len);
             LOG(DEBUG,"clock(%d) protocol_send_login_msg PROTOCOL_JT808 regist msg len(%d)).", util_clock(), idx);
         }
         break;
@@ -390,12 +395,14 @@ GM_ERRCODE protocol_send_device_msg(SocketType *socket)
     {
     case PROTOCOL_GOOME:
         protocol_goome_pack_iccid_msg(buff, &idx, len);  //17 bytes
+        LOG_HEX((char*)buff,len);
         break;
     case PROTOCOL_CONCOX:
         protocol_concox_pack_device_status_msg(buff, &idx, len);  //38bytes
         break;
     case PROTOCOL_JT808:
         protocol_jt_pack_iccid_msg(buff, &idx, len);  // max 39 bytes
+        LOG_HEX((char*)buff,len);
         break;
     default:
         LOG(WARN,"clock(%d) protocol_send_device_msg assert(app protocol(%d)) failed.", util_clock(), config_service_get_app_protocol());
@@ -449,6 +456,7 @@ GM_ERRCODE protocol_send_temperature_msg(SocketType *socket)
     {
     case PROTOCOL_GOOME:
         protocol_goome_pack_temperature_msg(buff, &idx, len);  //17 bytes
+        LOG_HEX((char*)buff,len);
         break;
     case PROTOCOL_CONCOX:
         break;
@@ -496,6 +504,7 @@ GM_ERRCODE protocol_send_signal_msg(SocketType *socket)
 	{
 	case PROTOCOL_GOOME:
 		protocol_goome_pack_signal_msg(buff, &idx, len);
+		LOG_HEX((char*)buff,len);
 		break;
 	case PROTOCOL_CONCOX:
 		break;
@@ -546,12 +555,14 @@ GM_ERRCODE protocol_send_heartbeat_msg(SocketType *socket)
     {
     case PROTOCOL_GOOME:
         protocol_goome_pack_heartbeat_msg(buff, &idx, len);  //17 bytes
+        LOG_HEX((char*)buff,len);
         break;
     case PROTOCOL_CONCOX:
         protocol_concox_pack_heartbeat_msg(buff, &idx, len);  // max 20 bytes
         break;
     case PROTOCOL_JT808:
         protocol_jt_pack_heartbeat_msg(buff, &idx, len);  // max 19 bytes
+        LOG_HEX((char*)buff,len);
         break;
     default:
         LOG(WARN,"clock(%d) protocol_send_heartbeat_msg assert(app protocol(%d)) failed.", util_clock(), config_service_get_app_protocol());
@@ -684,12 +695,14 @@ GM_ERRCODE protocol_send_remote_ack(SocketType *socket, u8 *pRet, u16 retlen)
     {
     case PROTOCOL_GOOME:
         protocol_goome_pack_remote_ack(buff, &idx, len, pRet, retlen);  //12+retlen bytes
+        LOG_HEX((char*)buff,len);
         break;
     case PROTOCOL_CONCOX:
         protocol_concox_pack_remote_ack(buff, &idx, len, pRet, retlen);  // max 18+retlen bytes
         break;
     case PROTOCOL_JT808:
         protocol_jt_pack_remote_ack(buff, &idx, len, pRet, retlen);  //22|26 +retlen bytes
+        LOG_HEX((char*)buff,len);
         break;
     default:
         LOG(WARN,"clock(%d) protocol_send_remote_ack assert(app protocol(%d)) failed.", util_clock(), config_service_get_app_protocol());
@@ -731,6 +744,7 @@ GM_ERRCODE protocol_send_general_ack(SocketType *socket)
     {
     case PROTOCOL_JT808:
         protocol_jt_pack_general_ack(buff, &idx, len);  //max 24 bytes
+        LOG_HEX((char*)buff,len);
         break;
     default:
         LOG(WARN,"clock(%d) protocol_send_general_ack assert(app protocol(%d)) failed.", util_clock(), config_service_get_app_protocol());
@@ -778,6 +792,7 @@ GM_ERRCODE protocol_send_param_get_ack(SocketType *socket)
     {
     case PROTOCOL_JT808:
         protocol_jt_pack_param_ack(buff, &idx, len); 
+		LOG_HEX((char*)buff,len);
         break;
     default:
         LOG(WARN,"clock(%d) protocol_send_param_get_ack assert(app protocol(%d)) failed.", util_clock(), config_service_get_app_protocol());

@@ -287,7 +287,8 @@ static GprsParaFileType * s_Para2 = NULL;
 
 
 
-/*
+/*
+
 由于要兼容老配置, 所以直接使用了原来的函数与结构,
 这里提供的对外接口,则主要是做结构转换.
 */
@@ -962,6 +963,9 @@ static void config_service_set_factory_deault(void)
     value_s8 = 8;
 	config_service_set(CFG_TIME_ZONE, TYPE_BYTE, &value_s8, sizeof(value_s8));
 
+	value_u8 = 0;
+	config_service_set(CFG_GPS_CLOSE, TYPE_BOOL, &value_u8, sizeof(value_u8));
+
 	value_u8 = GM_GPS_TYPE_UNKNOWN;
 	config_service_set(CFG_GPS_TYPE, TYPE_BYTE, &value_u8, sizeof(value_u8));
 	
@@ -1472,8 +1476,16 @@ void config_service_set_device(ConfigDeviceTypeEnum type ,bool setServer)
             config_service_set(CFG_IS_90V_POWER, TYPE_BOOL, &value_u8, sizeof(value_u8));
             break;
                     
-        //case DEVICE_GS07A:
-        //case DEVICE_AS07A:
+        case DEVICE_C1:
+            value_u8 = false;
+            config_service_set(CFG_IS_90V_POWER, TYPE_BOOL, &value_u8, sizeof(value_u8));
+            value_u8 = false;
+            config_service_set(CFG_IS_RELAY_ENABLE, TYPE_BOOL, &value_u8, sizeof(value_u8));
+            value_u8 = true;
+            config_service_set(CFG_IS_MANUAL_DEFENCE, TYPE_BOOL, &value_u8, sizeof(value_u8));
+            value_u8 = true;
+            config_service_set(CFG_APP_BATTERT_MGR, TYPE_BOOL, &value_u8, sizeof(value_u8));
+			break;
         default:
             break;
     }

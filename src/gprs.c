@@ -41,6 +41,7 @@ typedef struct
     u32 call_ok_count;   //CURRENT_GPRS_INIT->CURRENT_GPRS_CALL_OK 次数
     s32 bear_status;
     bool apn_ok;
+	bool flight_mode;
 }GprsType;
 static GprsType s_gprs;
 
@@ -457,7 +458,9 @@ void gprs_socket_notify(void* msg_ptr)
 
 GM_ERRCODE gprs_create(void)
 {
+	gprs_close_flight_mode();
     s_gprs.status = CURRENT_GPRS_INIT;
+	s_gprs.flight_mode = false;
 
     // 在gprs_init_proc中需要检测
     s_gprs.last_good_time = s_gprs.failed_time = util_clock();
@@ -514,14 +517,25 @@ static void gprs_init_proc(void)
     }
     else
     {
-        led_set_gsm_state(GM_LED_OFF);
-        current_time = util_clock();
-        if((current_time - s_gprs.failed_time) > GPRS_REREGIST_NEED_TIME_MAX)
-        {
-            LOG(DEBUG,"clock(%d) gprs_init_proc exceed(%d)",util_clock(),GPRS_REREGIST_NEED_TIME_MAX);
-            //system_state_set_gpss_reboot_reason("gprs_init_proc");
-            gprs_destroy();
-        }
+    	if(GM_SYSTEM_STATE_WORK == system_state_get_work_state())
+    	{
+        	led_set_gsm_state(GM_LED_FLASH);
+    	}
+		else
+		{
+			led_set_gsm_state(GM_LED_OFF);
+		}
+		
+		if(!s_gprs.flight_mode)
+		{
+	        current_time = util_clock();
+	        if((current_time - s_gprs.failed_time) > GPRS_REREGIST_NEED_TIME_MAX)
+	        {
+	            LOG(DEBUG,"clock(%d) gprs_init_proc exceed(%d)",util_clock(),GPRS_REREGIST_NEED_TIME_MAX);
+	            //system_state_set_gpss_reboot_reason("gprs_init_proc");
+	            gprs_destroy();
+	        }
+		}
         // else recheck.
     }
 }
@@ -743,4 +757,21 @@ u32 gprs_get_call_ok_count(void)
 {
     return s_gprs.call_ok_count;
 }
+
+void gprs_open_flight_mode(void)
+{
+	char flight_mode = true;
+
+    GM_GetSetFlightMode(true, &flight_mode);
+	s_gprs.flight_mode = flight_mode;
+}
+
+void gprs_close_flight_mode(void)
+{
+	char flight_mode = false;
+
+    GM_GetSetFlightMode(true, &flight_mode);
+	s_gprs.flight_mode = flight_mode;
+}
+
 

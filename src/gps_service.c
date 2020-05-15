@@ -38,8 +38,8 @@ typedef struct
 	u32 receive_heart_counts;  //收到心跳计数
 	u32 send_location_counts;  //发送定位数据计数
     u32 data_finish_time;  //进入到SOCKET_STATUS_DATA_FINISH状态的时间
-    u32 lbs_send_time;
-    u32 wifi_send_time;
+    u32 lbs_send_time;	//移动定位服务发送时间
+    u32 wifi_send_time;	//wifi发送时间
 	bool wifi_send_atonce; //立即上传一条WiFi信息
     u32 saved_socket_ack;  //发消息前，ack的值
     u32 connection_time;  //连接建立时间
@@ -700,6 +700,8 @@ GM_ERRCODE gps_service_change_config(void)
         config_service_set(CFG_JT_ISREGISTERED, TYPE_BOOL, &value_u8, sizeof(value_u8));
         
         gps_service_create(false);
+
+		system_state_set_reported_gps_since_modify_ip(false);
     }
     return GM_SUCCESS;
 }
@@ -910,6 +912,7 @@ GM_ERRCODE gps_service_cache_send(u8 *data, u8 len)
             u16 buf_len = sizeof(buff);
             protocol_jt_pack_escape(data, len, buff, &buf_len);
             ret = gm_socket_send(&s_gps_socket, buff, buf_len);
+		
             if(GM_SUCCESS == ret)
             {
                 s_gps_socket.send_time = util_clock();
@@ -925,6 +928,7 @@ GM_ERRCODE gps_service_cache_send(u8 *data, u8 len)
         else
         {
         	ret = gm_socket_send(&s_gps_socket, data, len);
+		
             if(GM_SUCCESS == ret)
             {
                 s_gps_socket.send_time = util_clock();
@@ -970,9 +974,10 @@ GM_ERRCODE gps_service_push_gps(GpsDataModeEnum mode, const GPSData *gps)
         return GM_PARAM_ERROR;
     }
 
-	LOG(INFO,"Report GPS,LAT:%f,LNG:%f,SPEED:%f,COURSE:%f,SATES:%d,HDOP:%f,SIGNAL:%d",
+	LOG(INFO,"Report GPS,LAT:%f,LNG:%f,ALT:%f,SPEED:%f,COURSE:%f,SATES:%d,HDOP:%f,SIGNAL:%d",
 		gps->lat,
 		gps->lng,
+		gps->alt,
 		gps->speed,
 		gps->course,
 		gps->satellites_tracked,
@@ -1051,6 +1056,7 @@ GM_ERRCODE gps_service_send_one_locate(GpsDataModeEnum mode, bool use_lbs)
             {
                 LOG(DEBUG,"clock(%d) gps_service_send_one_locate lbs msglen(%d)", util_clock(), idx);
                 ret = gm_socket_send(&s_gps_socket, buff, idx);
+			
                 if(GM_SUCCESS == ret)
                 {
                     s_gps_socket.send_time = util_clock();
@@ -1108,6 +1114,7 @@ GM_ERRCODE gps_service_send_one_locate(GpsDataModeEnum mode, bool use_lbs)
     {
         LOG(DEBUG,"clock(%d) gps_service_send_one_locate gps msglen(%d)", util_clock(), idx);
         ret = gm_socket_send(&s_gps_socket, buff, idx);
+	
         if(GM_SUCCESS == ret)
         {
             s_gps_socket.send_time = util_clock();
@@ -1406,6 +1413,7 @@ static GM_ERRCODE gps_service_push_sms_alarm(AlarmInfo *alarm)
     {
         gps.lat = agps_service_get_unfix_lat();
         gps.lng = agps_service_get_unfix_lng();
+		gps.alt = 0;
     }
 
     lencont += GM_snprintf((char*)buff, 1023,"IMEI:%s,Time:%d-%02d-%02d %02d:%02d:%02d,AlarmType:", imei,current_time.year,current_time.month,current_time.day,current_time.hour,current_time.minute,current_time.second);
@@ -1606,6 +1614,7 @@ GM_ERRCODE gps_service_push_position_request(u8 *mobile_num, u8 num_len, u8 *com
     {
         LOG(DEBUG,"clock(%d) gps_service_push_position_request msglen(%d) mobile_num(%s)", util_clock(), len,mobile_num);
         ret = gm_socket_send(&s_gps_socket, buff, len);
+	
         if(GM_SUCCESS == ret)
         {
             s_gps_socket.send_time = util_clock();

@@ -51,6 +51,7 @@
 //串口缓冲区内存大小
 #define GM_UART_RCV_FIFO_LEN 2048
 
+
 typedef struct
 {
 	U32 baud_rate;
@@ -68,15 +69,11 @@ typedef struct
 	UARTPara UARTParas[GM_UART_MAX];
 }UART,*PUART;
 
-
 static UART g_uart;
 
 static void debug_port_on_receive(void* msg);
-
 static void gps_port_on_receive(void* msg);
 static void at_port_on_receive(void* msg);
-
-
 
 /**
  * Function:   创建uart模块
@@ -86,6 +83,7 @@ static void at_port_on_receive(void* msg);
  * Return:	   GM_SUCCESS——成功；其它错误码——失败
  * Others:	   使用前必须调用,否则调用其它接口返回失败错误码
  */
+ 
 GM_ERRCODE uart_create(void)
 {
 	U8 index = 0;
@@ -107,6 +105,7 @@ GM_ERRCODE uart_create(void)
 	g_uart.inited = true;
 
 	uart_open_port(GM_UART_DEBUG,BAUD_RATE_HIGH,0);
+	
 	return GM_SUCCESS;
 }
 
@@ -126,7 +125,7 @@ GM_ERRCODE uart_destroy(void)
 		
 	for (index = GM_UART_DEBUG; index < GM_UART_MAX; ++index)
 	{
-		g_uart.UARTParas[index].baud_rate = 115200;
+		g_uart.UARTParas[index].baud_rate = BAUD_RATE_HIGH;
 		g_uart.UARTParas[index].last_rcv_time = 0;
 		g_uart.UARTParas[index].is_open = false;
 		fifo_delete(&g_uart.UARTParas[index].rcv_fifo);
@@ -150,7 +149,7 @@ GM_ERRCODE uart_timer_proc(void)
 	for (index = GM_UART_DEBUG; index < GM_UART_MAX; index++)
 	{
 		//检查GPS端口是否长时间收不到数据
-		if (false == g_uart.UARTParas[index].is_open || 0 == g_uart.UARTParas[index].no_data_to_reopen_time)
+		if (!g_uart.UARTParas[index].is_open || 0 == g_uart.UARTParas[index].no_data_to_reopen_time)
 		{
 			//LOG(DEBUG,"port:%d,reopentime:%d",index,g_uart.UARTParas[index].no_data_to_reopen_time);
 			continue;
@@ -188,7 +187,7 @@ GM_ERRCODE uart_timer_proc(void)
 GM_ERRCODE uart_open_port(const UARTPort port, const U32 baud_rate, const U16 no_data_to_reopen_time)
 {
 	S32 ret = 0;
-	if (false == g_uart.inited)
+	if (!g_uart.inited)
 	{
 		return GM_NOT_INIT;
 	}
@@ -203,6 +202,7 @@ GM_ERRCODE uart_open_port(const UARTPort port, const U32 baud_rate, const U16 no
 
 	if (1 == ret)
 	{
+
 	    g_uart.UARTParas[port].baud_rate = baud_rate;
 		g_uart.UARTParas[port].no_data_to_reopen_time = no_data_to_reopen_time;
 		g_uart.UARTParas[port].last_rcv_time = util_clock();
@@ -225,15 +225,12 @@ GM_ERRCODE uart_open_port(const UARTPort port, const U32 baud_rate, const U16 no
  */
 GM_ERRCODE uart_close_port(const UARTPort port)
 {
-	if (false == g_uart.inited)
+	if (!g_uart.inited || !g_uart.UARTParas[port].is_open)
 	{
 		return GM_NOT_INIT;
 	}
 	
-	if(false == g_uart.UARTParas[port].is_open)
-	{
-		return GM_NOT_INIT;
-	}
+	uart_write(GM_UART_DEBUG, "uart close", 10);
 
 	//关闭串口前要清理缓存
     GM_UartClrRxBuffer((Enum_SerialPort)port);
@@ -276,7 +273,7 @@ GM_ERRCODE uart_close_port(const UARTPort port)
 GM_ERRCODE uart_write(const UARTPort port, const U8* p_data, const U16 len)
 {
 	s32 ret = -1;
-	if (false == g_uart.inited)
+	if (!g_uart.inited)
 	{
 		return GM_NOT_INIT;
 	}
@@ -286,8 +283,8 @@ GM_ERRCODE uart_write(const UARTPort port, const U8* p_data, const U16 len)
 		GM_UartWrite((Enum_SerialPort)port, (U8*)"error len", GM_strlen("error len"));
 		return GM_NOT_INIT;
 	}
-
-	if (len > 10*CMD_MAX_LEN)
+	
+	if (len > 10 * CMD_MAX_LEN) 
 	{
 		return GM_PARAM_ERROR;
 	}
@@ -321,10 +318,13 @@ static void debug_port_on_receive(void* msg)
 	S32 len = 0;
 	char cmd_rsp[CMD_MAX_LEN] = {0};
 	
-	if (false == g_uart.UARTParas[GM_UART_DEBUG].is_open)
+	if (!g_uart.UARTParas[GM_UART_DEBUG].is_open)
 	{
 		return;
 	}
+
+
+
 	
 	g_uart.UARTParas[GM_UART_DEBUG].last_rcv_time = util_clock();	
 
@@ -355,7 +355,7 @@ static void gps_port_on_receive(void* msg)
 	U16 sentence_len = 0;
 	GM_ERRCODE ret = GM_SUCCESS;
 	U16 head = 0;
-	
+
 	g_uart.UARTParas[GM_UART_GPS].last_rcv_time = util_clock();	
 
 	do
@@ -456,12 +456,11 @@ static void gps_port_on_receive(void* msg)
 }
 
 
-
 static void at_port_on_receive(void* msg)
 {
 	S32 len = 0;
 
-	if (false == g_uart.UARTParas[GM_UART_AT].is_open)
+	if (!g_uart.UARTParas[GM_UART_AT].is_open)
 	{
 		return;
 	}

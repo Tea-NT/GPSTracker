@@ -2409,11 +2409,11 @@ GM_ERRCODE hard_ware_reboot(const BootReason reason,U16 delay_seconds)
  */
 GM_ERRCODE hard_ware_sleep(void)
 {
-	GM_PERIPHERAL_TYPE peripheral_type;
-	config_service_get(CFG_PERIPHERAL_TYPE, TYPE_BYTE, &peripheral_type, sizeof(peripheral_type));
+	U8 peripheral_type = 0;
+	config_service_get(CFG_PERIPHERAL_TYPE, TYPE_BYTE, &peripheral_type, sizeof(U8));
 
 	//如果是外接传感器，不关串口1，不休眠，不上报日志
-	if (PERIPHERAL_TYPE_NONE == peripheral_type)
+	if (PERIPHERAL_TYPE_NONE != peripheral_type)
 	{
 		return GM_SUCCESS;
 	}
@@ -2473,6 +2473,8 @@ GM_ERRCODE hard_ware_awake(void)
 		json_add_int(p_log_root, "csq", gsm_get_csq());
 		json_add_int(p_log_root, "run time", system_state_get_start_time());
 		log_service_upload(INFO,p_log_root);
+
+		uart_open_port(GM_UART_DEBUG,BAUD_RATE_HIGH,0);
 		return GM_SUCCESS;
 	}
 }

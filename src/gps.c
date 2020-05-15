@@ -95,6 +95,7 @@ typedef struct
 	CircularQueue gps_time_queue;
 	CircularQueue gps_lat_queue;
 	CircularQueue gps_lng_queue;
+	CircularQueue gps_alt_queue;
 	CircularQueue gps_speed_queue;
 	CircularQueue gps_course_queue;
 	CircularQueue gps_hdop_queue;
@@ -262,6 +263,7 @@ GM_ERRCODE gps_create(void)
 	circular_queue_create(&s_gps.gps_time_queue, GPS_BUFF_LEN, GM_QUEUE_TYPE_INT);
 	circular_queue_create(&s_gps.gps_lat_queue, GPS_BUFF_LEN, GM_QUEUE_TYPE_FLOAT);
 	circular_queue_create(&s_gps.gps_lng_queue, GPS_BUFF_LEN, GM_QUEUE_TYPE_FLOAT);
+	circular_queue_create(&s_gps.gps_alt_queue, GPS_BUFF_LEN, GM_QUEUE_TYPE_FLOAT);
 	circular_queue_create(&s_gps.gps_speed_queue, GPS_BUFF_LEN, GM_QUEUE_TYPE_FLOAT);
 	circular_queue_create(&s_gps.gps_course_queue, GPS_BUFF_LEN, GM_QUEUE_TYPE_FLOAT);
 	circular_queue_create(&s_gps.gps_hdop_queue, GPS_BUFF_LEN, GM_QUEUE_TYPE_FLOAT);
@@ -275,6 +277,7 @@ GM_ERRCODE gps_destroy(void)
 	circular_queue_destroy(&s_gps.gps_time_queue, GM_QUEUE_TYPE_INT);
 	circular_queue_destroy(&s_gps.gps_lat_queue, GM_QUEUE_TYPE_FLOAT);
 	circular_queue_destroy(&s_gps.gps_lng_queue, GM_QUEUE_TYPE_FLOAT);
+	circular_queue_destroy(&s_gps.gps_alt_queue, GM_QUEUE_TYPE_FLOAT);
 	circular_queue_destroy(&s_gps.gps_speed_queue, GM_QUEUE_TYPE_FLOAT);
 	circular_queue_destroy(&s_gps.gps_course_queue, GM_QUEUE_TYPE_FLOAT);
 	circular_queue_destroy(&s_gps.gps_hdop_queue, GM_QUEUE_TYPE_FLOAT);
@@ -344,8 +347,8 @@ GM_ERRCODE gps_power_on(bool push_data_enbale)
 	bool gps_close = false;
 	u8 work_mode;
 
-	uart_open_port(GM_UART_DEBUG,BAUD_RATE_HIGH,0);
-	hard_ware_awake();
+	
+	
 
 	config_service_get(CFG_GPS_CLOSE, TYPE_BOOL, &gps_close, sizeof(gps_close));
 	config_service_get(CFG_WORKMODE, TYPE_BYTE, &work_mode, sizeof(work_mode));
@@ -913,12 +916,9 @@ GM_ERRCODE gps_power_off(void)
 	GM_StopTimer(GM_TIMER_WIFI_SCAN);
 	GM_StopTimer(GM_TIMER_GPS_CHECK_STATE);
 	GM_StopTimer(GM_TIMER_GPS_CHECK_RECEIVED);
-	uart_close_port(GM_UART_GPS);
 	led_set_gps_state(GM_LED_OFF);
 	
-	
 	hard_ware_close_gps();
-	hard_ware_sleep();
 	GM_SysMsdelay(1000);
 	s_gps.sleep_time = util_clock();
 	gps_kalman_filter_destroy();
@@ -1021,6 +1021,10 @@ bool gps_get_last_n_senconds_data(U8 seconds,GPSData* p_data)
 				return false;
 		}
 		if(!circular_queue_get_by_index_f(&s_gps.gps_lng_queue, seconds, &p_data->lng))
+		{
+				return false;
+		}
+		if(!circular_queue_get_by_index_f(&s_gps.gps_alt_queue, seconds, &p_data->alt))
 		{
 				return false;
 		}
@@ -1971,6 +1975,7 @@ static void on_received_rmc(const NMEASentenceRMC rmc)
 		circular_queue_en_queue_i(&s_gps.gps_time_queue,gps_data.gps_time);
 		circular_queue_en_queue_f(&s_gps.gps_lat_queue,gps_data.lat);
 		circular_queue_en_queue_f(&s_gps.gps_lng_queue, gps_data.lng);
+		circular_queue_en_queue_f(&s_gps.gps_alt_queue, gps_data.alt);
 		circular_queue_en_queue_f(&s_gps.gps_speed_queue,gps_data.speed);
 		circular_queue_en_queue_f(&s_gps.gps_course_queue,gps_data.course);
 		circular_queue_en_queue_f(&s_gps.gps_hdop_queue,gps_data.hdop);
@@ -2214,6 +2219,24 @@ static void upload_gps_data(const GPSData current_gps_data)
 		LOG(INFO,"Set local time:(%d-%02d-%02d %02d:%02d:%02d)).",st_time.year,st_time.month,st_time.day,st_time.hour,st_time.minute,st_time.second);
 	}
 
+	//发现如果是拐点，再补传一条几秒前的数据
+	if(GPS_MODE_TURN_POINT == mode)
+	{
+		GPSData last_n_gps_data = {0};
+		U8 n_seconds = (util_clock() - s_gps.report_time);
+
+		//3秒以前上传过，取后三分之一位置的数据补传
+		n_seconds = (n_seconds >= 3 ? n_seconds/3 : n_seconds);
+
+		//如果是2秒前上传的，取1秒前的数据补传
+		n_seconds = (n_seconds == 2 ? 1 : 0);
+		if(n_seconds >= 1)
+		{
+			gps_get_last_n_senconds_data(n_seconds, &last_n_gps_data);
+			gps_service_push_gps(GPS_MODE_TURN_POINT,&last_n_gps_data);
+		}
+	}
+	
 	ret = gps_service_push_gps(mode,&current_gps_data);
 
     if(ret == GM_SUCCESS)

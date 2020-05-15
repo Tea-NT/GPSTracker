@@ -44,6 +44,7 @@
 #include "uart.h"
 #include "update_service.h"
 #include "socket.h"
+#include "gprs.h"
 
 //写控制bit
 #define I2C_WR 0
@@ -520,16 +521,16 @@ GM_ERRCODE enter_sleep_mode(void)
 {
 	if(GM_SYSTEM_STATE_WORK == system_state_get_work_state())
 	{
+		hard_ware_sleep();
 		if(GM_SUCCESS == gps_power_off())
 		{
 			if (hard_ware_is_device_w())
 			{
-				char flight_mode = true;
 				bool gps_close = false;
 				config_service_get(CFG_GPS_CLOSE, TYPE_BOOL, &gps_close, sizeof(gps_close));
-				if(gps_close && SOCKET_STATUS_DATA_FINISH == update_service_get_status() || SOCKET_STATUS_ERROR == update_service_get_status())
+				if(gps_close && (SOCKET_STATUS_DATA_FINISH == update_service_get_status() || SOCKET_STATUS_ERROR == update_service_get_status()))
 				{
-					GM_GetSetFlightMode(true, &flight_mode);
+					gprs_open_flight_mode();
 				}
 				GPMFUN(sleep)();
 			}
@@ -547,19 +548,19 @@ GM_ERRCODE enter_sleep_mode(void)
 GM_ERRCODE exit_sleep_mode(void)
 {
 	if(GM_SYSTEM_STATE_SLEEP == system_state_get_work_state())
-	{
+	{   
+		hard_ware_awake();
 		if(GM_SUCCESS == gps_power_on(true))
 		{
 			system_state_set_work_state(GM_SYSTEM_STATE_WORK);
 			led_set_gsm_state(GM_LED_FLASH);
 			if (hard_ware_is_device_w())
 			{
-				char flight_mode = false;
 				bool gps_close = false;
 				config_service_get(CFG_GPS_CLOSE, TYPE_BOOL, &gps_close, sizeof(gps_close));
 				if(gps_close)
 				{
-					GM_GetSetFlightMode(true, &flight_mode);
+					gprs_close_flight_mode();
 				}
             	GPMFUN(wakeup)();
 			}
@@ -784,12 +785,17 @@ static void g_sensor_eint_callback(void* v_arg)
 	bool shake_alarm_enable = false;
 
 	U32 last_shake_time = 0;
+	bool gps_close = true;
+
+	//用作开门检测，设置更灵敏
+	config_service_get(CFG_GPS_CLOSE,TYPE_BOOL,&gps_close,sizeof(gps_close));
+	
 	circular_queue_get_tail_i(&s_gsensor.shake_event_time_queue_when_eint, (S32*)&last_shake_time);
 	//不是同一秒的才入对列
-	if (now > last_shake_time)
+	if (now > last_shake_time || gps_close)
 	{
 		circular_queue_en_queue_i(&s_gsensor.shake_event_time_queue_when_eint, now);
-		LOG(INFO, "Shake once in EINT(now=%d)",now);
+		LOG(INFO, "Shake once in EINT(now=%d).",now);
 	}
 	
 	if(config_service_get(CFG_IS_SHAKE_ALARM_ENABLE, TYPE_BOOL, &shake_alarm_enable, sizeof(shake_alarm_enable)))
@@ -867,6 +873,7 @@ static void read_data_from_chip(void)
 	aclr.x = aclr.x >> 4;
 	aclr.y = aclr.y >> 4;
 	aclr.z = aclr.z >> 4;
+	//LOG(DEBUG,"aclr:%d,%d,%d",aclr.x,aclr.y,aclr.z);
 
 	s_gsensor.read_data_count++;
 	check_shake_event(aclr);
@@ -1015,7 +1022,17 @@ void check_vehicle_state(Aclr a)
   
    
 	bool aclr_alarm_enable = false;
-	
+
+	bool gps_close = true;
+
+	U8 avg_len = G_SENSOR_SAMPLE_FREQ;
+
+	//用作开门检测，设置更灵敏
+	config_service_get(CFG_GPS_CLOSE,TYPE_BOOL,&gps_close,sizeof(gps_close));
+	if(gps_close)
+	{
+		avg_len/=3;
+	}
     
     circular_queue_en_queue_i(&(s_gsensor.aclr_x_queue), a.x);
     circular_queue_en_queue_i(&(s_gsensor.aclr_y_queue), a.y);
@@ -1031,7 +1048,10 @@ void check_vehicle_state(Aclr a)
 	{
 		check_collision(sensor_aclr);
 	}
-    calculate_moving_avg(sensor_aclr, G_SENSOR_SAMPLE_FREQ, &(s_gsensor.senor_aclr_moving_avg), &(s_gsensor.cal_senor_aclr_avg_len));
+
+	
+	
+    calculate_moving_avg(sensor_aclr, avg_len, &(s_gsensor.senor_aclr_moving_avg), &(s_gsensor.cal_senor_aclr_avg_len));
 
     //还没学好
     if (s_gsensor.study_aclr_count < MIN_STUDY_GRAVITY_TIMES)
